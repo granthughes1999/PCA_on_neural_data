@@ -1,0 +1,658 @@
+﻿def run_epoch_condition_pca_for_probe(probe,
+
+                                      merged_dic,
+
+                                      event_meta,
+
+                                      roi_filter=None,
+
+                                      kslabel_filter="both",
+
+                                      include_conditions=None,
+
+                                      n_components=12,
+
+                                      max_tensor_gb=8.0,
+
+                                      brain_region_filter=None):
+
+    if include_conditions is None:
+
+        include_conditions = ["baseline", "stimulation", "washout"]
+
+
+
+    em = event_meta.copy()
+
+    em = em[em["condition"].isin(include_conditions)].reset_index(drop=True)
+
+    if em.empty:
+
+        raise ValueError("No events left after include_conditions filter.")
+
+
+
+    probe_df = pca_get_probe_units_df(
+
+        merged_dic=merged_dic,
+
+        probe=probe,
+
+        roi_filter=roi_filter,
+
+        kslabel_filter=kslabel_filter,
+
+    )
+
+    if probe_df.empty:
+
+        raise ValueError(f"Probe {probe}: no units after filtering.")
+
+
+
+    if "brain_region" in probe_df.columns:
+
+        br = probe_df["brain_region"].map(_normalize_brain_region_value)
+
+        probe_df = probe_df.assign(brain_region=br)
+
+        if brain_region_filter is not None:
+
+            target = _normalize_brain_region_value(brain_region_filter)
+
+            probe_df = probe_df[probe_df["brain_region"] == target].reset_index(drop=True)
+
+            if probe_df.empty:
+
+                raise ValueError(f"Probe {probe}: no units for brain_region={target} after filtering.")
+
+
+
+    spike_times = [np.asarray(x, dtype=float) for x in probe_df["spike_times"].values]
+
+
+
+    trials, t = pca_bin_spikes_around_events(
+
+        spike_times_list=spike_times,
+
+        event_times_s=em["start_time"].to_numpy(dtype=float),
+
+        win_start_s=WINDOW_START_S,
+
+        win_end_s=WINDOW_END_S,
+
+        bin_size_s=BIN_SIZE_S,
+
+        max_tensor_gb=max_tensor_gb,
+
+    )
+
+
+
+    # Trial-level PCA (one point per event)
+
+    X_trial = trials.mean(axis=2).T  # (units, n_events)
+
+    Xz = zscore_rows(X_trial)
+
+    pca = PCA(n_components=min(n_components, Xz.shape[0], Xz.shape[1]))
+
+    Xp = pca.fit_transform(Xz.T).T
+
+
+
+    return em, trials, t, Xp, pca.explained_variance_ratio_
+
+
+
+
+
+
+
+def _normalize_brain_region_value(v):
+
+    if pd.isna(v):
+
+        return "unknown"
+
+    s = str(v).strip()
+
+    if s == "":
+
+        return "unknown"
+
+    if s.lower() in {"nan", "none", "null"}:
+
+        return "unknown"
+
+    return s
+
+def _list_probe_brain_regions(merged_dic, probe, roi_filter=None, kslabel_filter="both"):
+
+    probe_df = pca_get_probe_units_df(
+
+        merged_dic=merged_dic,
+
+        probe=probe,
+
+        roi_filter=roi_filter,
+
+        kslabel_filter=kslabel_filter,
+
+    )
+
+    if probe_df.empty:
+
+        return []
+
+
+
+    if "brain_region" not in probe_df.columns:
+
+        return ["unknown"]
+
+
+
+    vals = probe_df["brain_region"].map(_normalize_brain_region_value)
+
+    return sorted(vals.unique().tolist())
+
+
+
+
+
+def _probe_brain_region_label(merged_dic, probe, roi_filter=None, kslabel_filter="both", max_regions=6, brain_region_filter=None):
+
+    probe_df = pca_get_probe_units_df(
+
+        merged_dic=merged_dic,
+
+        probe=probe,
+
+        roi_filter=roi_filter,
+
+        kslabel_filter=kslabel_filter,
+
+    )
+
+    if probe_df.empty or ("brain_region" not in probe_df.columns):
+
+        return "brain_region: n/a"
+
+
+
+    vals = probe_df["brain_region"].map(_normalize_brain_region_value)
+
+
+
+    if brain_region_filter is not None:
+
+        return f"brain_region: {_normalize_brain_region_value(brain_region_filter)}"
+
+
+
+    uniq = sorted(vals.unique().tolist())
+
+    if len(uniq) == 0:
+
+        return "brain_region: n/a"
+
+    if len(uniq) <= max_regions:
+
+        return "brain_region: " + ", ".join(uniq)
+
+    head = ", ".join(uniq[:max_regions])
+
+    return f"brain_region: {head}, +{len(uniq) - max_regions} more"
+
+
+
+
+
+def plot_epoch_condition_scatter(Xp, event_meta, title_prefix="", subtitle="", probe="unknown", brain_region="unknown", show_plots=True):
+
+    if Xp.shape[0] < 3:
+
+        raise ValueError(f"Need at least 3 PCs for plotting; got {Xp.shape[0]}.")
+
+
+
+    projections = [(0, 1), (1, 2), (0, 2)]
+
+
+
+    # Color by epoch
+
+    epochs = sorted(event_meta["epoch_id"].dropna().astype(int).unique().tolist())
+
+    pal = sns.color_palette("husl", max(3, len(epochs)))
+
+    epoch_color = {ep: pal[i % len(pal)] for i, ep in enumerate(epochs)}
+
+
+
+    # Marker by condition
+
+    cond_marker = {
+
+        "baseline": "o",
+
+        "stimulation": "^",
+
+        "washout": "s",
+
+    }
+
+
+
+    fig, axes = plt.subplots(1, 3, figsize=(24, 8))
+
+    for ax, (i, j) in zip(axes, projections):
+
+        for cond in event_meta["condition"].unique():
+
+            em_cond = event_meta[event_meta["condition"] == cond]
+
+            marker = cond_marker.get(cond, "o")
+
+            for ep in sorted(em_cond["epoch_id"].dropna().astype(int).unique()):
+
+                idx = em_cond.index[em_cond["epoch_id"].astype(int) == ep].to_numpy()
+
+                label = f"{cond}, epoch {ep}"
+
+                ax.scatter(
+
+                    Xp[i, idx],
+
+                    Xp[j, idx],
+
+                    s=140,
+
+                    alpha=1.0,
+
+                    marker=marker,
+
+                    color=epoch_color[ep],
+
+                    edgecolors="black",
+
+                    linewidths=0.8,
+
+                    label=label,
+
+                )
+
+
+
+        ax.set_xlabel(f"PC {i+1}")
+
+        ax.set_ylabel(f"PC {j+1}")
+
+
+
+    handles, labels = axes[-1].get_legend_handles_labels()
+
+    uniq = dict(zip(labels, handles))
+
+    axes[-1].legend(uniq.values(), uniq.keys(), frameon=False, bbox_to_anchor=(1.02, 1.0), loc="upper left", fontsize=10)
+
+
+
+    fig.suptitle(title_prefix, fontsize=18, y=0.99)
+
+    if subtitle:
+
+        fig.text(0.5, 0.94, subtitle, ha="center", va="center", fontsize=11)
+
+
+
+    sns.despine()
+
+    plt.tight_layout(rect=[0, 0, 1, 0.9])
+
+
+
+    save_path = root_PCA_plot_save_path / 'PCA_by_Epoch' / '2D_scatter'
+
+    save_path.mkdir(parents=True, exist_ok=True)
+
+    out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_epoch_condition_scatter_2D.png"
+
+    plt.savefig(out, dpi=300, bbox_inches="tight")
+
+    if show_plots:
+
+        plt.show()
+
+    else:
+
+        plt.close()
+
+        print(f"PCA plot saved to {out}")
+
+
+
+
+
+def plot_epoch_condition_scatter_3d(Xp, event_meta, title_prefix="", subtitle="", probe="unknown", brain_region="unknown", show_plots=False):
+
+    if Xp.shape[0] < 3:
+
+        raise ValueError(f"Need at least 3 PCs for 3D plotting; got {Xp.shape[0]}.")
+
+
+
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+
+
+    epochs = sorted(event_meta["epoch_id"].dropna().astype(int).unique().tolist())
+
+    pal = sns.color_palette("husl", max(3, len(epochs)))
+
+    epoch_color = {ep: pal[i % len(pal)] for i, ep in enumerate(epochs)}
+
+
+
+    cond_marker = {
+
+        "baseline": "o",
+
+        "stimulation": "^",
+
+        "washout": "s",
+
+    }
+
+
+
+    fig = plt.figure(figsize=(12, 10))
+
+    ax = fig.add_subplot(111, projection="3d")
+
+
+
+    for cond in event_meta["condition"].unique():
+
+        em_cond = event_meta[event_meta["condition"] == cond]
+
+        marker = cond_marker.get(cond, "o")
+
+        for ep in sorted(em_cond["epoch_id"].dropna().astype(int).unique()):
+
+            idx = em_cond.index[em_cond["epoch_id"].astype(int) == ep].to_numpy()
+
+            label = f"{cond}, epoch {ep}"
+
+            ax.scatter(
+
+                Xp[0, idx],
+
+                Xp[1, idx],
+
+                Xp[2, idx],
+
+                s=90,
+
+                alpha=1.0,
+
+                marker=marker,
+
+                color=epoch_color[ep],
+
+                edgecolors="black",
+
+                linewidths=0.6,
+
+                label=label,
+
+            )
+
+
+
+    ax.set_xlabel("PC 1")
+
+    ax.set_ylabel("PC 2")
+
+    ax.set_zlabel("PC 3")
+
+
+
+    handles, labels = ax.get_legend_handles_labels()
+
+    uniq = dict(zip(labels, handles))
+
+    ax.legend(uniq.values(), uniq.keys(), loc="upper left", bbox_to_anchor=(1.02, 1.0), frameon=False, fontsize=9)
+
+
+
+    fig.suptitle(title_prefix + " (3D)", fontsize=16, y=0.98)
+
+    if subtitle:
+
+        fig.text(0.5, 0.93, subtitle, ha="center", va="center", fontsize=10)
+
+
+
+    plt.tight_layout(rect=[0, 0, 0.85, 0.9])
+
+
+
+    save_path = root_PCA_plot_save_path / "PCA_by_Epoch" / "3D_scatter"
+
+    save_path.mkdir(parents=True, exist_ok=True)
+
+    out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_epoch_condition_scatter_3D.png"
+
+    plt.savefig(out, dpi=250, bbox_inches="tight")
+
+    if show_plots:
+
+         plt.show()
+
+    else:
+
+        plt.close()
+
+        print(f"PCA plot saved to {out}")
+
+
+
+
+
+def plot_epoch_condition_line_3d_time(
+
+    Xp,
+
+    event_meta,
+
+    title_prefix="",
+
+    subtitle="",
+
+    probe="unknown",
+
+    brain_region="unknown",
+
+    time_col="start_time",
+
+    show_plots=False,
+
+):
+
+    if Xp.shape[0] < 2:
+
+        raise ValueError(f"Need at least 2 PCs for PC1-PC2-Time plotting; got {Xp.shape[0]}.")
+
+    if time_col not in event_meta.columns:
+
+        raise ValueError(f"{time_col} not found in event_meta columns: {list(event_meta.columns)}")
+
+
+
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+
+
+    em = event_meta.copy()
+
+    em[time_col] = pd.to_numeric(em[time_col], errors="coerce")
+
+    em = em.dropna(subset=[time_col, "epoch_id", "condition"]).reset_index(drop=True)
+
+    if em.empty:
+
+        raise ValueError("No valid events available after dropping NaN times/labels.")
+
+
+
+    t0 = em[time_col].min()
+
+    em["time_rel_s"] = em[time_col] - t0
+
+
+
+    epochs = sorted(em["epoch_id"].astype(int).unique().tolist())
+
+    pal = sns.color_palette("husl", max(3, len(epochs)))
+
+    epoch_color = {ep: pal[i % len(pal)] for i, ep in enumerate(epochs)}
+
+
+
+    cond_marker = {
+
+        "baseline": "o",
+
+        "stimulation": "^",
+
+        "washout": "s",
+
+    }
+
+    cond_linestyle = {
+
+        "baseline": "-",
+
+        "stimulation": "--",
+
+        "washout": ":",
+
+    }
+
+
+
+    fig = plt.figure(figsize=(13, 10))
+
+    ax = fig.add_subplot(111, projection="3d")
+
+
+
+    for cond in em["condition"].astype(str).unique():
+
+        em_cond = em[em["condition"].astype(str) == cond]
+
+        marker = cond_marker.get(cond, "o")
+
+        ls = cond_linestyle.get(cond, "-")
+
+
+
+        for ep in sorted(em_cond["epoch_id"].astype(int).unique()):
+
+            idx = em_cond.index[em_cond["epoch_id"].astype(int) == ep].to_numpy()
+
+            if idx.size < 2:
+
+                continue
+
+
+
+            order = np.argsort(em.loc[idx, "time_rel_s"].to_numpy(dtype=float))
+
+            idx = idx[order]
+
+            label = f"{cond}, epoch {ep}"
+
+
+
+            ax.plot(
+
+                Xp[0, idx],
+
+                Xp[1, idx],
+
+                em.loc[idx, "time_rel_s"].to_numpy(dtype=float),
+
+                color=epoch_color[ep],
+
+                linestyle=ls,
+
+                linewidth=2.2,
+
+                marker=marker,
+
+                markersize=4.0,
+
+                markeredgecolor="black",
+
+                markeredgewidth=0.5,
+
+                label=label,
+
+            )
+
+
+
+    ax.set_xlabel("PC 1")
+
+    ax.set_ylabel("PC 2")
+
+    ax.set_zlabel("Time (s, rel)")
+
+
+
+    handles, labels = ax.get_legend_handles_labels()
+
+    uniq = dict(zip(labels, handles))
+
+    ax.legend(uniq.values(), uniq.keys(), loc="upper left", bbox_to_anchor=(1.02, 1.0), frameon=False, fontsize=9)
+
+
+
+    fig.suptitle(title_prefix + " (PC1-PC2-Time)", fontsize=16, y=0.98)
+
+    if subtitle:
+
+        fig.text(0.5, 0.93, subtitle, ha="center", va="center", fontsize=10)
+
+
+
+    plt.tight_layout(rect=[0, 0, 0.85, 0.9])
+
+
+
+    save_path = root_PCA_plot_save_path / "PCA_by_Epoch" / "3D_PC12_Time"
+
+    save_path.mkdir(parents=True, exist_ok=True)
+
+    out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_epoch_condition_line_PC12_Time.png"
+
+    plt.savefig(out, dpi=250, bbox_inches="tight")
+
+
+
+    if show_plots:
+
+        plt.show()
+
+    else:
+
+        plt.close()
+
+        print(f"PCA plot saved to {out}")
+
+
+
