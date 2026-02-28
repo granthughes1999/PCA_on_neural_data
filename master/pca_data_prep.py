@@ -751,6 +751,207 @@ def build_pca_event_meta_and_event_times(
         all_stimROI_triggers_start_times,
     )
 
+
+def _normalize_event_time_source_name(name: str) -> str:
+    key = str(name).strip().lower()
+    alias = {
+        "start_time": "start_time",
+        "reachinit": "all_stimROI_triggers_start_times",
+        "reachinit_stimroi": "all_stimROI_triggers_start_times",
+        "reachinit_stimroi_timestamps": "all_stimROI_triggers_start_times",
+        "trigger": "all_stimROI_triggers_start_times",
+        "all_stimroi_triggers_start_times": "all_stimROI_triggers_start_times",
+        "all_stimroi_triggers": "all_stimROI_triggers_start_times",
+        "tone1": "tone1_start_times",
+        "tone1_start_times": "tone1_start_times",
+        "tone2": "tone2_start_times",
+        "tone2_start_times": "tone2_start_times",
+        "stimroi": "stimROI_start_times",
+        "stimroi_start_times": "stimROI_start_times",
+        "optical": "optical_start_times",
+        "optical_start_times": "optical_start_times",
+    }
+    return alias.get(key, str(name).strip())
+
+
+def _nearest_event_time_lookup(ref_times: np.ndarray, candidate_times: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    if candidate_times.size == 0:
+        out = np.full(ref_times.shape, np.nan, dtype=float)
+        d = np.full(ref_times.shape, np.nan, dtype=float)
+        return out, d
+
+    cand = np.asarray(candidate_times, dtype=float)
+    cand = cand[np.isfinite(cand)]
+    if cand.size == 0:
+        out = np.full(ref_times.shape, np.nan, dtype=float)
+        d = np.full(ref_times.shape, np.nan, dtype=float)
+        return out, d
+
+    cand_sorted = np.sort(cand)
+    ref = np.asarray(ref_times, dtype=float)
+    out = np.full(ref.shape, np.nan, dtype=float)
+    d = np.full(ref.shape, np.nan, dtype=float)
+
+    valid = np.isfinite(ref)
+    if not np.any(valid):
+        return out, d
+
+    x = ref[valid]
+    right = np.searchsorted(cand_sorted, x, side="left")
+    left = np.clip(right - 1, 0, cand_sorted.size - 1)
+    right = np.clip(right, 0, cand_sorted.size - 1)
+
+    left_val = cand_sorted[left]
+    right_val = cand_sorted[right]
+    choose_right = np.abs(right_val - x) < np.abs(left_val - x)
+    picked = np.where(choose_right, right_val, left_val)
+    dist = np.abs(picked - x)
+
+    out[valid] = picked
+    d[valid] = dist
+    return out, d
+
+
+def align_pca_event_meta_start_times(
+    pca_event_meta: pd.DataFrame,
+    *,
+    align_to: str = "all_stimROI_triggers_start_times",
+    tone1_start_times: np.ndarray | list[float] | None = None,
+    tone2_start_times: np.ndarray | list[float] | None = None,
+    stimROI_start_times: np.ndarray | list[float] | None = None,
+    optical_start_times: np.ndarray | list[float] | None = None,
+    all_stimROI_triggers_start_times: np.ndarray | list[float] | None = None,
+    mismatch: str = "index_then_nearest",
+    max_delta_s: float | None = None,
+    drop_unmatched: bool = True,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """
+    Return a copy of pca_event_meta with start_time remapped to a selected event source.
+
+    Parameters
+    ----------
+    align_to:
+      One of:
+      - 'start_time' (keep existing values)
+      - 'tone1_start_times'
+      - 'tone2_start_times'
+      - 'stimROI_start_times'
+      - 'optical_start_times'
+      - 'all_stimROI_triggers_start_times' (reach-init trigger)
+      Common aliases are accepted (e.g. 'tone1', 'stimROI', 'optical', 'reachInit').
+
+    mismatch:
+      - 'index'              : strict trial_index0 -> source[index]
+      - 'nearest'            : nearest source event to existing start_time
+      - 'index_then_nearest' : index mapping first, then nearest for missing rows
+    """
+    if "trial_index0" not in pca_event_meta.columns:
+        raise ValueError("pca_event_meta must contain trial_index0.")
+    if "start_time" not in pca_event_meta.columns:
+        raise ValueError("pca_event_meta must contain start_time.")
+
+    mode = str(mismatch).strip().lower()
+    valid_modes = {"index", "nearest", "index_then_nearest"}
+    if mode not in valid_modes:
+        raise ValueError(f"Invalid mismatch='{mismatch}'. Use one of {sorted(valid_modes)}.")
+
+    source_name = _normalize_event_time_source_name(align_to)
+    source_map = {
+        "tone1_start_times": tone1_start_times,
+        "tone2_start_times": tone2_start_times,
+        "stimROI_start_times": stimROI_start_times,
+        "optical_start_times": optical_start_times,
+        "all_stimROI_triggers_start_times": all_stimROI_triggers_start_times,
+    }
+
+    em = pca_event_meta.copy().reset_index(drop=True)
+
+    if source_name == "start_time":
+        em["start_time"] = pd.to_numeric(em["start_time"], errors="coerce")
+        em["start_time_source"] = "start_time"
+        em["start_time_align_method"] = "existing"
+        em["start_time_align_abs_delta_s"] = 0.0
+        report = {
+            "source": "start_time",
+            "method": "existing",
+            "input_rows": int(len(pca_event_meta)),
+            "output_rows": int(len(em)),
+            "unmatched_rows": 0,
+        }
+        return em, report
+
+    if source_name not in source_map:
+        raise ValueError(
+            f"Unknown align_to='{align_to}'. "
+            "Expected start_time, tone1, tone2, stimROI, optical, or all_stimROI_triggers_start_times."
+        )
+
+    src = source_map[source_name]
+    if src is None:
+        raise ValueError(
+            f"align_to='{source_name}' requested, but corresponding array was not provided."
+        )
+    src_arr = np.asarray(src, dtype=float).ravel()
+    if src_arr.size == 0:
+        raise ValueError(f"Source array '{source_name}' is empty.")
+
+    trial_idx = pd.to_numeric(em["trial_index0"], errors="coerce").to_numpy(dtype=float)
+    ref_time = pd.to_numeric(em["start_time"], errors="coerce").to_numpy(dtype=float)
+
+    aligned = np.full(len(em), np.nan, dtype=float)
+    method = np.array(["unmatched"] * len(em), dtype=object)
+    delta = np.full(len(em), np.nan, dtype=float)
+
+    used_index = False
+    if mode in {"index", "index_then_nearest"}:
+        valid_idx = np.isfinite(trial_idx)
+        idx_int = np.zeros(len(em), dtype=int)
+        idx_int[valid_idx] = trial_idx[valid_idx].astype(int)
+        in_range = valid_idx & (idx_int >= 0) & (idx_int < src_arr.size)
+        aligned[in_range] = src_arr[idx_int[in_range]]
+        method[in_range] = "index"
+        delta[in_range] = np.abs(aligned[in_range] - ref_time[in_range])
+        used_index = True
+
+    if mode in {"nearest", "index_then_nearest"}:
+        need = np.isnan(aligned)
+        nearest_val, nearest_dist = _nearest_event_time_lookup(ref_time[need], src_arr)
+        aligned[need] = nearest_val
+        delta[need] = nearest_dist
+        method[need & np.isfinite(nearest_val)] = "nearest"
+
+    if mode == "index" and np.isnan(aligned).any():
+        n_bad = int(np.isnan(aligned).sum())
+        raise ValueError(
+            f"Index alignment failed for {n_bad} rows. "
+            f"Source '{source_name}' length is {src_arr.size}, but some trial_index0 are out of range. "
+            "Use mismatch='index_then_nearest' or mismatch='nearest' to fill by nearest event time."
+        )
+
+    if max_delta_s is not None:
+        max_delta_s = float(max_delta_s)
+        too_far = np.isfinite(delta) & (delta > max_delta_s)
+        aligned[too_far] = np.nan
+        method[too_far] = "delta_exceeded"
+
+    em["start_time"] = aligned
+    em["start_time_source"] = source_name
+    em["start_time_align_method"] = method
+    em["start_time_align_abs_delta_s"] = delta
+
+    if drop_unmatched:
+        em = em.dropna(subset=["start_time"]).reset_index(drop=True)
+
+    report = {
+        "source": source_name,
+        "method": mode,
+        "used_index": bool(used_index),
+        "input_rows": int(len(pca_event_meta)),
+        "output_rows": int(len(em)),
+        "unmatched_rows": int(np.isnan(aligned).sum()),
+    }
+    return em, report
+
 def merge_units_with_metrics(
     df_units_dic: dict[str, pd.DataFrame],
     qm_dic: dict[str, pd.DataFrame] | None = None,

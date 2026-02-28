@@ -1530,6 +1530,8 @@ def plot_epoch_condition_line_3d_time(
                 Xp[1, idx],
                 t_rel,
                 z=t_rel,
+                condition=cond,
+                epoch_id=ep,
                 linewidth=2.2,
                 alpha=1.0,
                 linestyle=ls,
@@ -1567,7 +1569,11 @@ _EPOCH_PLOT_STYLE_DEFAULTS = {
     "stimulation_linestyle": ":",
     "washout_linestyle": "-",
     "baseline_linestyle": "-",
+    "baseline_color": "orange",
     "mode3_base_color": "#808080",
+    "mode3_stimulation_color": "tab:blue",
+    "mode3_washout_color": "tab:red",
+    "mode3_baseline_color": "orange",
     "mode3_highlight_color": "#2ca25f",
     "mode3_highlight_window_s": 0.5,
 }
@@ -1578,7 +1584,11 @@ def set_epoch_plot_style(
     stimulation_linestyle=":",
     washout_linestyle="-",
     baseline_linestyle="-",
+    baseline_color="orange",
     mode3_base_color="#808080",
+    mode3_stimulation_color="tab:blue",
+    mode3_washout_color="tab:red",
+    mode3_baseline_color="orange",
     mode3_highlight_color="#2ca25f",
     mode3_highlight_window_s=0.5,
 ):
@@ -1589,7 +1599,11 @@ def set_epoch_plot_style(
         "stimulation_linestyle": stimulation_linestyle,
         "washout_linestyle": washout_linestyle,
         "baseline_linestyle": baseline_linestyle,
+        "baseline_color": baseline_color,
         "mode3_base_color": mode3_base_color,
+        "mode3_stimulation_color": mode3_stimulation_color,
+        "mode3_washout_color": mode3_washout_color,
+        "mode3_baseline_color": mode3_baseline_color,
         "mode3_highlight_color": mode3_highlight_color,
         "mode3_highlight_window_s": mode3_highlight_window_s,
     }
@@ -1638,7 +1652,11 @@ def _epoch_condition_color_marker_maps(
     stimulation_linestyle=None,
     washout_linestyle=None,
     baseline_linestyle=None,
+    baseline_color=None,
     mode3_base_color=None,
+    mode3_stimulation_color=None,
+    mode3_washout_color=None,
+    mode3_baseline_color=None,
     mode3_highlight_color=None,
     mode3_highlight_window_s=None,
 ):
@@ -1651,8 +1669,16 @@ def _epoch_condition_color_marker_maps(
         cfg["washout_linestyle"] = washout_linestyle
     if baseline_linestyle is not None:
         cfg["baseline_linestyle"] = baseline_linestyle
+    if baseline_color is not None:
+        cfg["baseline_color"] = baseline_color
     if mode3_base_color is not None:
         cfg["mode3_base_color"] = mode3_base_color
+    if mode3_stimulation_color is not None:
+        cfg["mode3_stimulation_color"] = mode3_stimulation_color
+    if mode3_washout_color is not None:
+        cfg["mode3_washout_color"] = mode3_washout_color
+    if mode3_baseline_color is not None:
+        cfg["mode3_baseline_color"] = mode3_baseline_color
     if mode3_highlight_color is not None:
         cfg["mode3_highlight_color"] = mode3_highlight_color
     if mode3_highlight_window_s is not None:
@@ -1666,23 +1692,24 @@ def _epoch_condition_color_marker_maps(
         "epoch_color": {},
         "stim_epoch_color": {},
         "wash_epoch_color": {},
-        "baseline_color": "#6e6e6e",
+        "baseline_color": cfg["baseline_color"],
         "mode3_base_color": cfg["mode3_base_color"],
+        "mode3_stimulation_color": cfg["mode3_stimulation_color"],
+        "mode3_washout_color": cfg["mode3_washout_color"],
+        "mode3_baseline_color": cfg["mode3_baseline_color"],
         "mode3_highlight_color": cfg["mode3_highlight_color"],
         "mode3_highlight_window_s": float(cfg["mode3_highlight_window_s"]),
     }
 
+    n = max(1, len(epochs))
+    for i, ep in enumerate(epochs):
+        t = i / max(1, n - 1)
+        style_ctx["stim_epoch_color"][ep] = _interp_color("#9ecae1", "#08519c", t)
+        style_ctx["wash_epoch_color"][ep] = _interp_color("#fcbba1", "#a50f15", t)
+
     if mode == 1:
         pal = sns.color_palette("husl", max(3, len(epochs)))
         style_ctx["epoch_color"] = {ep: pal[i % len(pal)] for i, ep in enumerate(epochs)}
-    elif mode == 2:
-        n = max(1, len(epochs))
-        for i, ep in enumerate(epochs):
-            t = i / max(1, n - 1)
-            style_ctx["stim_epoch_color"][ep] = _interp_color("#9ecae1", "#08519c", t)
-            style_ctx["wash_epoch_color"][ep] = _interp_color("#fcbba1", "#a50f15", t)
-    else:
-        style_ctx["baseline_color"] = cfg["mode3_base_color"]
 
     cond_marker = {
         "baseline": "o",
@@ -1702,6 +1729,12 @@ def _epoch_condition_color_for(style_ctx, condition, epoch_id, default_color="ta
     mode = int(style_ctx.get("color_mode", 1))
     ep = int(epoch_id)
 
+    if mode == 3:
+        return style_ctx.get("mode3_base_color", "#808080")
+
+    if cond == "baseline":
+        return style_ctx.get("baseline_color", "orange")
+
     if mode == 1:
         return style_ctx.get("epoch_color", {}).get(ep, default_color)
     if mode == 2:
@@ -1709,8 +1742,20 @@ def _epoch_condition_color_for(style_ctx, condition, epoch_id, default_color="ta
             return style_ctx.get("stim_epoch_color", {}).get(ep, "#08519c")
         if cond == "washout":
             return style_ctx.get("wash_epoch_color", {}).get(ep, "#a50f15")
-        return style_ctx.get("baseline_color", "#6e6e6e")
+        return default_color
     return style_ctx.get("mode3_base_color", "#808080")
+
+
+def _epoch_condition_mode3_highlight_color(style_ctx, condition, epoch_id):
+    cond = _normalize_condition_name(condition)
+    ep = int(epoch_id)
+    if cond == "stimulation":
+        return style_ctx.get("mode3_stimulation_color", style_ctx.get("stim_epoch_color", {}).get(ep, "#08519c"))
+    if cond == "washout":
+        return style_ctx.get("mode3_washout_color", style_ctx.get("wash_epoch_color", {}).get(ep, "#a50f15"))
+    if cond == "baseline":
+        return style_ctx.get("mode3_baseline_color", "orange")
+    return style_ctx.get("mode3_highlight_color", "#2ca25f")
 
 
 def _epoch_condition_linestyle_for(cond_linestyle, condition):
@@ -1725,6 +1770,8 @@ def _plot_mode3_highlight(
     y,
     time_rel_s,
     z=None,
+    condition=None,
+    epoch_id=None,
     linewidth=2.0,
     alpha=0.9,
     linestyle="-",
@@ -1738,7 +1785,7 @@ def _plot_mode3_highlight(
 
     xh = np.where(mask, np.asarray(x, dtype=float), np.nan)
     yh = np.where(mask, np.asarray(y, dtype=float), np.nan)
-    color = style_ctx.get("mode3_highlight_color", "#2ca25f")
+    color = _epoch_condition_mode3_highlight_color(style_ctx, condition, epoch_id)
     if z is None:
         ax.plot(
             xh,
@@ -2347,6 +2394,8 @@ def plot_epoch_condition_trial_time_lines_pc12_time(
             y,
             z,
             z=z,
+            condition=cond,
+            epoch_id=ep,
             linewidth=1.6,
             alpha=0.65,
             linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
@@ -2676,6 +2725,8 @@ def plot_epoch_population_lines_pc12_time(
             y,
             z,
             z=z,
+            condition=cond,
+            epoch_id=ep,
             linewidth=2.2,
             alpha=0.9,
             linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
@@ -3054,6 +3105,8 @@ def plot_epoch_condition_group_trial_time(
             x,
             y,
             zt,
+            condition=cond,
+            epoch_id=ep,
             linewidth=1.5,
             alpha=0.65,
             linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
@@ -3066,6 +3119,8 @@ def plot_epoch_condition_group_trial_time(
             y,
             zt,
             z=z,
+            condition=cond,
+            epoch_id=ep,
             linewidth=1.4,
             alpha=0.65,
             linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
@@ -3078,6 +3133,8 @@ def plot_epoch_condition_group_trial_time(
             y,
             zt,
             z=zt,
+            condition=cond,
+            epoch_id=ep,
             linewidth=1.5,
             alpha=0.65,
             linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
@@ -3173,6 +3230,8 @@ def plot_epoch_condition_group_epoch_population(
             x,
             y,
             zt,
+            condition=cond,
+            epoch_id=ep,
             linewidth=2.1,
             alpha=0.9,
             linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
@@ -3187,6 +3246,8 @@ def plot_epoch_condition_group_epoch_population(
             y,
             zt,
             z=z,
+            condition=cond,
+            epoch_id=ep,
             linewidth=2.0,
             alpha=0.9,
             linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
@@ -3201,6 +3262,8 @@ def plot_epoch_condition_group_epoch_population(
             y,
             zt,
             z=zt,
+            condition=cond,
+            epoch_id=ep,
             linewidth=2.0,
             alpha=0.9,
             linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),

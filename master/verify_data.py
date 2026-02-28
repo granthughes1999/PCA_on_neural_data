@@ -13,6 +13,139 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+def check_stim_event_timing(df_stim, max_window=4.0, show_detailed_output=True) -> dict[str, Any]:
+    """
+    Compute average time differences between task events and return
+    averages, counts, and the actual valid time pairs used.
+
+    Parameters
+    ----------
+    df_stim : pandas.DataFrame
+        Must contain columns ['stimulus', 'start_time'].
+    max_window : float
+        Maximum allowed time difference (seconds) for valid pairing.
+
+    Returns
+    -------
+    results : dict
+        Dictionary containing averages, pair counts, and valid_pairs.
+    """
+
+    import numpy as np
+
+    # --- Extract event times ---
+    all_stimROI_triggers = df_stim[df_stim['stimulus'] == 'reachInit_stimROI_timestamps']
+    stim_ROI_df          = df_stim[df_stim['stimulus'] == 'stimROI_timestamps']
+    optical_df           = df_stim[df_stim['stimulus'] == 'optical_timestamps']
+    tone2_df             = df_stim[df_stim['stimulus'] == 'tone2_timestamps']
+    tone1_df             = df_stim[df_stim['stimulus'] == 'tone1_timestamps']
+
+    tone1_start_times = tone1_df['start_time'].values
+    tone2_start_times = tone2_df['start_time'].values
+    stimROI_start_times = stim_ROI_df['start_time'].values
+    optical_start_times = optical_df['start_time'].values
+    all_stimROI_triggers_start_times = all_stimROI_triggers['start_time'].values
+
+    def compute_avg_diff(reference_times, target_times, max_window):
+        valid_pairs = []
+
+        if len(reference_times) == 0 or len(target_times) == 0:
+            return np.nan, 0, valid_pairs
+
+        for t_ref in reference_times:
+            idx = np.argmin(np.abs(target_times - t_ref))
+            closest = target_times[idx]
+            if 0 < closest - t_ref < max_window:
+                valid_pairs.append((t_ref, closest))
+
+        if len(valid_pairs) == 0:
+            return np.nan, 0, valid_pairs
+
+        avg_diff = np.mean([t2 - t1 for t1, t2 in valid_pairs])
+        return avg_diff, len(valid_pairs), valid_pairs
+
+    # --- Compute pairwise relationships ---
+    avg_t1_t2, n_t1_t2, pairs_t1_t2 = compute_avg_diff(tone1_start_times, tone2_start_times, max_window)
+    avg_t1_stimROI, n_t1_stimROI, pairs_t1_stimROI = compute_avg_diff(tone1_start_times, stimROI_start_times, max_window)
+    avg_t2_stimROI, n_t2_stimROI, pairs_t2_stimROI = compute_avg_diff(tone2_start_times, stimROI_start_times, max_window)
+    avg_t1_allStimROI, n_t1_allStimROI, pairs_t1_allStimROI = compute_avg_diff(tone1_start_times, all_stimROI_triggers_start_times, max_window)
+    avg_t2_allStimROI, n_t2_allStimROI, pairs_t2_allStimROI = compute_avg_diff(tone2_start_times, all_stimROI_triggers_start_times, max_window)
+    avg_allStimROI_stimROI, n_allStimROI_stimROI, pairs_allStimROI_stimROI = compute_avg_diff(
+        all_stimROI_triggers_start_times, stimROI_start_times, max_window
+    )
+
+    # --- Print structured summary ---
+    print('=== Average time differences between events (valid pairs within expected window): ===')
+
+    print('\n---- Expected ~2 s -----')
+    print('tone1 and tone2: ',
+          None if np.isnan(avg_t1_t2) else round(avg_t1_t2, 2),
+          f'({n_t1_t2} pairs)\n')
+
+    print('---- These two should be similar -----')
+    print('tone1 and stimROI:             ',
+          None if np.isnan(avg_t1_stimROI) else round(avg_t1_stimROI, 2),
+          f'({n_t1_stimROI} pairs)')
+    print('tone1 and all_stimROI_triggers:',
+          None if np.isnan(avg_t1_allStimROI) else round(avg_t1_allStimROI, 2),
+          f'({n_t1_allStimROI} pairs)\n')
+
+    print('---- These two should be similar -----')
+    print('tone2 and stimROI:             ',
+          None if np.isnan(avg_t2_stimROI) else round(avg_t2_stimROI, 2),
+          f'({n_t2_stimROI} pairs)')
+    print('tone2 and all_stimROI_triggers:',
+          None if np.isnan(avg_t2_allStimROI) else round(avg_t2_allStimROI, 2),
+          f'({n_t2_allStimROI} pairs)\n')
+
+    print('---- Should be near zero -----')
+    print('all_stimROI_triggers and stimROI:',
+          None if np.isnan(avg_allStimROI_stimROI) else round(avg_allStimROI_stimROI, 2),
+          f'({n_allStimROI_stimROI} pairs)')
+
+    # --- Return structured results ---
+    results = {
+        'tone1_tone2': {
+            'avg_diff': avg_t1_t2,
+            'n_pairs': n_t1_t2,
+            'valid_pairs': pairs_t1_t2
+        },
+        'tone1_stimROI': {
+            'avg_diff': avg_t1_stimROI,
+            'n_pairs': n_t1_stimROI,
+            'valid_pairs': pairs_t1_stimROI
+        },
+        'tone2_stimROI': {
+            'avg_diff': avg_t2_stimROI,
+            'n_pairs': n_t2_stimROI,
+            'valid_pairs': pairs_t2_stimROI
+        },
+        'tone1_allStimROI': {
+            'avg_diff': avg_t1_allStimROI,
+            'n_pairs': n_t1_allStimROI,
+            'valid_pairs': pairs_t1_allStimROI
+        },
+        'tone2_allStimROI': {
+            'avg_diff': avg_t2_allStimROI,
+            'n_pairs': n_t2_allStimROI,
+            'valid_pairs': pairs_t2_allStimROI
+        },
+        'allStimROI_stimROI': {
+            'avg_diff': avg_allStimROI_stimROI,
+            'n_pairs': n_allStimROI_stimROI,
+            'valid_pairs': pairs_allStimROI_stimROI
+        }
+    }
+
+    if show_detailed_output:
+        print('\n=== Detailed valid time pairs (within expected window) ===')
+        for key, data in results.items():
+            print(f'\n--- {key} ---')
+            for t1, t2 in data['valid_pairs']:
+                print(f'  {t1:.3f} s  -->  {t2:.3f} s  (diff: {t2 - t1:.3f} s)')
+
+    return results
+
 def _split_epochs_into_contiguous_20_trial_chunks(epochs, trials_per_epoch=20, mode="raise"):
     """
     epochs: list[list[int]] (output of _to_epochs)
