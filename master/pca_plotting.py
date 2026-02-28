@@ -522,7 +522,7 @@ def run_epoch_condition_pca_for_probe(
     return em, trials, t, Xp, pca.explained_variance_ratio_
 
 
-def probe_brain_region_label(merged_dic, probe, roi_filter=None, kslabel_filter="both", max_regions=6):
+def _probe_brain_region_label(merged_dic, probe, roi_filter=None, kslabel_filter="both", max_regions=6):
     probe_df = pca_get_probe_units_df(merged_dic=merged_dic, probe=probe, roi_filter=roi_filter, kslabel_filter=kslabel_filter)
     if probe_df.empty or ("brain_region" not in probe_df.columns):
         return "brain_region: n/a"
@@ -1330,7 +1330,7 @@ def _list_probe_brain_regions(merged_dic, probe, roi_filter=None, kslabel_filter
     vals = probe_df["brain_region"].map(_normalize_brain_region_value)
     return sorted(vals.unique().tolist())
 
-def _probe_brain_region_label(merged_dic, probe, roi_filter=None, kslabel_filter="both", max_regions=6, brain_region_filter=None):
+def probe_brain_region_label(merged_dic, probe, roi_filter=None, kslabel_filter="both", max_regions=6, brain_region_filter=None):
     probe_df = pca_get_probe_units_df(
         merged_dic=merged_dic,
         probe=probe,
