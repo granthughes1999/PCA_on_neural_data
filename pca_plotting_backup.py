@@ -1,10 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable
 
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -541,7 +540,10 @@ def plot_epoch_condition_scatter(Xp, event_meta, title_prefix="", subtitle="", p
     if Xp.shape[0] < 3:
         raise ValueError(f"Need at least 3 PCs for plotting; got {Xp.shape[0]}.")
     projections = [(0, 1), (1, 2), (0, 2)]
-    style_ctx, cond_marker, _ = _epoch_condition_color_marker_maps(event_meta)
+    epochs = sorted(event_meta["epoch_id"].dropna().astype(int).unique().tolist())
+    pal = sns.color_palette("husl", max(3, len(epochs)))
+    epoch_color = {ep: pal[i % len(pal)] for i, ep in enumerate(epochs)}
+    cond_marker = {"baseline": "o", "stimulation": "^", "washout": "s"}
 
     fig, axes = plt.subplots(1, 3, figsize=(24, 8))
     for ax, (i, j) in zip(axes, projections):
@@ -553,7 +555,7 @@ def plot_epoch_condition_scatter(Xp, event_meta, title_prefix="", subtitle="", p
                 ax.scatter(
                     Xp[i, idx], Xp[j, idx],
                     s=140, alpha=1.0, marker=marker,
-                    color=_epoch_condition_color_for(style_ctx, cond, ep), edgecolors="black", linewidths=0.8,
+                    color=epoch_color[ep], edgecolors="black", linewidths=0.8,
                     label=f"{cond}, epoch {ep}",
                 )
         ax.set_xlabel(f"PC {i+1}")
@@ -580,7 +582,10 @@ def plot_epoch_condition_scatter_3d(Xp, event_meta, title_prefix="", subtitle=""
     if Xp.shape[0] < 3:
         raise ValueError(f"Need at least 3 PCs for 3D plotting; got {Xp.shape[0]}.")
     from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
-    style_ctx, cond_marker, _ = _epoch_condition_color_marker_maps(event_meta)
+    epochs = sorted(event_meta["epoch_id"].dropna().astype(int).unique().tolist())
+    pal = sns.color_palette("husl", max(3, len(epochs)))
+    epoch_color = {ep: pal[i % len(pal)] for i, ep in enumerate(epochs)}
+    cond_marker = {"baseline": "o", "stimulation": "^", "washout": "s"}
 
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection="3d")
@@ -592,7 +597,7 @@ def plot_epoch_condition_scatter_3d(Xp, event_meta, title_prefix="", subtitle=""
             ax.scatter(
                 Xp[0, idx], Xp[1, idx], Xp[2, idx],
                 s=90, alpha=1.0, marker=marker,
-                color=_epoch_condition_color_for(style_ctx, cond, ep), edgecolors="black", linewidths=0.6,
+                color=epoch_color[ep], edgecolors="black", linewidths=0.6,
                 label=f"{cond}, epoch {ep}",
             )
     ax.set_xlabel("PC 1")
@@ -638,14 +643,18 @@ def plot_epoch_condition_line_3d_time(
     t0 = em[time_col].min()
     em["time_rel_s"] = em[time_col] - t0
 
-    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(em)
+    epochs = sorted(em["epoch_id"].astype(int).unique().tolist())
+    pal = sns.color_palette("husl", max(3, len(epochs)))
+    epoch_color = {ep: pal[i % len(pal)] for i, ep in enumerate(epochs)}
+    cond_marker = {"baseline": "o", "stimulation": "^", "washout": "s"}
+    cond_linestyle = {"baseline": "", "stimulation": "--", "washout": ":"}
 
     fig = plt.figure(figsize=(13, 10))
     ax = fig.add_subplot(111, projection="3d")
     for cond in em["condition"].astype(str).unique():
         em_cond = em[em["condition"].astype(str) == cond]
         marker = cond_marker.get(cond, "o")
-        ls = _epoch_condition_linestyle_for(cond_linestyle, cond)
+        ls = cond_linestyle.get(cond, "")
         for ep in sorted(em_cond["epoch_id"].astype(int).unique()):
             idx = em_cond.index[em_cond["epoch_id"].astype(int) == ep].to_numpy()
             if idx.size < 2:
@@ -654,7 +663,7 @@ def plot_epoch_condition_line_3d_time(
             idx = idx[order]
             ax.plot(
                 Xp[0, idx], Xp[1, idx], em.loc[idx, "time_rel_s"].to_numpy(dtype=float),
-                color=_epoch_condition_color_for(style_ctx, cond, ep), linestyle=ls, linewidth=2.2,
+                color=epoch_color[ep], linestyle=ls, linewidth=2.2,
                 marker=marker, markersize=4.0, markeredgecolor="black", markeredgewidth=0.5,
                 label=f"{cond}, epoch {ep}",
             )
@@ -699,7 +708,10 @@ def plot_epoch_condition_scatter_epoch_avg(Xp, event_meta, title_prefix="", subt
     groups = _epoch_condition_group_order(event_meta)
     if len(groups) == 0:
         raise ValueError("No valid (condition, epoch) groups found for epoch-averaged plotting.")
-    style_ctx, cond_marker, _ = _epoch_condition_color_marker_maps(event_meta)
+    epochs = sorted(event_meta["epoch_id"].dropna().astype(int).unique().tolist())
+    pal = sns.color_palette("husl", max(3, len(epochs)))
+    epoch_color = {ep: pal[i % len(pal)] for i, ep in enumerate(epochs)}
+    cond_marker = {"baseline": "o", "stimulation": "^", "washout": "s"}
 
     projections = [(0, 1), (1, 2), (0, 2)]
     fig, axes = plt.subplots(1, 3, figsize=(24, 8))
@@ -709,7 +721,7 @@ def plot_epoch_condition_scatter_epoch_avg(Xp, event_meta, title_prefix="", subt
             p2 = float(np.nanmean(Xp[j, idx]))
             ax.scatter(
                 [p1], [p2], s=220, alpha=1.0,
-                marker=cond_marker.get(cond, "o"), color=_epoch_condition_color_for(style_ctx, cond, ep, default_color="gray"),
+                marker=cond_marker.get(cond, "o"), color=epoch_color.get(ep, "gray"),
                 edgecolors="black", linewidths=1.0, label=f"{cond}, epoch {ep}",
             )
         ax.set_xlabel(f"PC {i+1}")
@@ -737,7 +749,10 @@ def plot_epoch_condition_scatter_3d_epoch_avg(Xp, event_meta, title_prefix="", s
     groups = _epoch_condition_group_order(event_meta)
     if len(groups) == 0:
         raise ValueError("No valid (condition, epoch) groups found for epoch-averaged plotting.")
-    style_ctx, cond_marker, _ = _epoch_condition_color_marker_maps(event_meta)
+    epochs = sorted(event_meta["epoch_id"].dropna().astype(int).unique().tolist())
+    pal = sns.color_palette("husl", max(3, len(epochs)))
+    epoch_color = {ep: pal[i % len(pal)] for i, ep in enumerate(epochs)}
+    cond_marker = {"baseline": "o", "stimulation": "^", "washout": "s"}
 
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection="3d")
@@ -747,7 +762,7 @@ def plot_epoch_condition_scatter_3d_epoch_avg(Xp, event_meta, title_prefix="", s
         z = float(np.nanmean(Xp[2, idx]))
         ax.scatter(
             [x], [y], [z], s=160, alpha=1.0,
-            marker=cond_marker.get(cond, "o"), color=_epoch_condition_color_for(style_ctx, cond, ep, default_color="gray"),
+            marker=cond_marker.get(cond, "o"), color=epoch_color.get(ep, "gray"),
             edgecolors="black", linewidths=0.8, label=f"{cond}, epoch {ep}",
         )
     ax.set_xlabel("PC 1")
@@ -809,7 +824,11 @@ def plot_epoch_condition_line_3d_time_epoch_avg(
         pcs_by_group.append(Xp[start:start + n_bins, :])
         start += n_bins
 
-    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(event_meta)
+    epochs = sorted(event_meta["epoch_id"].dropna().astype(int).unique().tolist())
+    pal = sns.color_palette("husl", max(3, len(epochs)))
+    epoch_color = {ep: pal[i % len(pal)] for i, ep in enumerate(epochs)}
+    cond_marker = {"baseline": "o", "stimulation": "^", "washout": "s"}
+    cond_linestyle = {"baseline": "", "stimulation": "--", "washout": ":"}
 
     fig = plt.figure(figsize=(13, 10))
     ax = fig.add_subplot(111, projection="3d")
@@ -823,8 +842,8 @@ def plot_epoch_condition_line_3d_time_epoch_avg(
             y = gaussian_filter1d(y, sigma=float(smooth_sigma))
         ax.plot(
             x, y, t,
-            color=_epoch_condition_color_for(style_ctx, cond, ep, default_color="gray"),
-            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
+            color=epoch_color.get(ep, "gray"),
+            linestyle=cond_linestyle.get(cond, ""),
             linewidth=2.6,
             marker=cond_marker.get(cond, "o"),
             markersize=4.0,
@@ -1334,22 +1353,23 @@ def probe_brain_region_label(merged_dic, probe, roi_filter=None, kslabel_filter=
     head = ", ".join(uniq[:max_regions])
     return f"brain_region: {head}, +{len(uniq) - max_regions} more"
 
-def plot_epoch_condition_scatter(
-    Xp,
-    event_meta,
-    title_prefix="",
-    subtitle="",
-    probe="unknown",
-    brain_region="unknown",
-    n_units=None,
-    save_root: str | Path = "master/results",
-    show_plots=True,
-):
+def plot_epoch_condition_scatter(Xp, event_meta, title_prefix="", subtitle="", probe="unknown", brain_region="unknown", n_units=None, show_plots=True):
     if Xp.shape[0] < 3:
         raise ValueError(f"Need at least 3 PCs for plotting; got {Xp.shape[0]}.")
 
     projections = [(0, 1), (1, 2), (0, 2)]
-    style_ctx, cond_marker, _ = _epoch_condition_color_marker_maps(event_meta)
+
+    # Color by epoch
+    epochs = sorted(event_meta["epoch_id"].dropna().astype(int).unique().tolist())
+    pal = sns.color_palette("husl", max(3, len(epochs)))
+    epoch_color = {ep: pal[i % len(pal)] for i, ep in enumerate(epochs)}
+
+    # Marker by condition
+    cond_marker = {
+        "baseline": "o",
+        "stimulation": "^",
+        "washout": "s",
+    }
 
     fig, axes = plt.subplots(1, 3, figsize=(24, 8))
     for ax, (i, j) in zip(axes, projections):
@@ -1365,7 +1385,7 @@ def plot_epoch_condition_scatter(
                     s=140,
                     alpha=1.0,
                     marker=marker,
-                    color=_epoch_condition_color_for(style_ctx, cond, ep),
+                    color=epoch_color[ep],
                     edgecolors="black",
                     linewidths=0.8,
                     label=label,
@@ -1397,22 +1417,21 @@ def plot_epoch_condition_scatter(
         plt.close()
         print(f"PCA plot saved to {out}")
 
-def plot_epoch_condition_scatter_3d(
-    Xp,
-    event_meta,
-    title_prefix="",
-    subtitle="",
-    probe="unknown",
-    brain_region="unknown",
-    n_units=None,
-    save_root: str | Path = "master/results",
-    show_plots=False,
-):
+def plot_epoch_condition_scatter_3d(Xp, event_meta, title_prefix="", subtitle="", probe="unknown", brain_region="unknown", n_units=None, show_plots=False):
     if Xp.shape[0] < 3:
         raise ValueError(f"Need at least 3 PCs for 3D plotting; got {Xp.shape[0]}.")
 
     from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
-    style_ctx, cond_marker, _ = _epoch_condition_color_marker_maps(event_meta)
+
+    epochs = sorted(event_meta["epoch_id"].dropna().astype(int).unique().tolist())
+    pal = sns.color_palette("husl", max(3, len(epochs)))
+    epoch_color = {ep: pal[i % len(pal)] for i, ep in enumerate(epochs)}
+
+    cond_marker = {
+        "baseline": "o",
+        "stimulation": "^",
+        "washout": "s",
+    }
 
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection="3d")
@@ -1430,7 +1449,7 @@ def plot_epoch_condition_scatter_3d(
                 s=90,
                 alpha=1.0,
                 marker=marker,
-                color=_epoch_condition_color_for(style_ctx, cond, ep),
+                color=epoch_color[ep],
                 edgecolors="black",
                 linewidths=0.6,
                 label=label,
@@ -1471,7 +1490,6 @@ def plot_epoch_condition_line_3d_time(
     brain_region="unknown",
     time_col="start_time",
     n_units=None,
-    save_root: str | Path = "master/results",
     show_plots=False,
 ):
     if Xp.shape[0] < 2:
@@ -1490,7 +1508,20 @@ def plot_epoch_condition_line_3d_time(
     t0 = em[time_col].min()
     em["time_rel_s"] = em[time_col] - t0
 
-    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(em)
+    epochs = sorted(em["epoch_id"].astype(int).unique().tolist())
+    pal = sns.color_palette("husl", max(3, len(epochs)))
+    epoch_color = {ep: pal[i % len(pal)] for i, ep in enumerate(epochs)}
+
+    cond_marker = {
+        "baseline": "o",
+        "stimulation": "^",
+        "washout": "s",
+    }
+    cond_linestyle = {
+        "baseline": "",
+        "stimulation": "--",
+        "washout": ":",
+    }
 
     fig = plt.figure(figsize=(13, 10))
     ax = fig.add_subplot(111, projection="3d")
@@ -1498,7 +1529,7 @@ def plot_epoch_condition_line_3d_time(
     for cond in em["condition"].astype(str).unique():
         em_cond = em[em["condition"].astype(str) == cond]
         marker = cond_marker.get(cond, "o")
-        ls = _epoch_condition_linestyle_for(cond_linestyle, cond)
+        ls = cond_linestyle.get(cond, "")
 
         for ep in sorted(em_cond["epoch_id"].astype(int).unique()):
             idx = em_cond.index[em_cond["epoch_id"].astype(int) == ep].to_numpy()
@@ -1508,13 +1539,12 @@ def plot_epoch_condition_line_3d_time(
             order = np.argsort(em.loc[idx, "time_rel_s"].to_numpy(dtype=float))
             idx = idx[order]
             label = f"{cond}, epoch {ep}"
-            t_rel = em.loc[idx, "time_rel_s"].to_numpy(dtype=float)
 
             ax.plot(
                 Xp[0, idx],
                 Xp[1, idx],
-                t_rel,
-                color=_epoch_condition_color_for(style_ctx, cond, ep),
+                em.loc[idx, "time_rel_s"].to_numpy(dtype=float),
+                color=epoch_color[ep],
                 linestyle=ls,
                 linewidth=2.2,
                 marker=marker,
@@ -1522,17 +1552,6 @@ def plot_epoch_condition_line_3d_time(
                 markeredgecolor="black",
                 markeredgewidth=0.5,
                 label=label,
-            )
-            _plot_mode3_highlight(
-                ax,
-                style_ctx,
-                Xp[0, idx],
-                Xp[1, idx],
-                t_rel,
-                z=t_rel,
-                linewidth=2.2,
-                alpha=1.0,
-                linestyle=ls,
             )
 
     ax.set_xlabel("PC 1")
@@ -1562,127 +1581,10 @@ def plot_epoch_condition_line_3d_time(
         plt.close()
         print(f"PCA plot saved to {out}")
 
-_EPOCH_PLOT_STYLE_DEFAULTS = {
-    "color_mode": 1,
-    "stimulation_linestyle": ":",
-    "washout_linestyle": "-",
-    "baseline_linestyle": "-",
-    "mode3_base_color": "#808080",
-    "mode3_highlight_color": "#2ca25f",
-    "mode3_highlight_window_s": 0.5,
-}
-
-
-def set_epoch_plot_style(
-    color_mode=1,
-    stimulation_linestyle=":",
-    washout_linestyle="-",
-    baseline_linestyle="-",
-    mode3_base_color="#808080",
-    mode3_highlight_color="#2ca25f",
-    mode3_highlight_window_s=0.5,
-):
-    """Set global style defaults used by epoch-condition plotting helpers."""
-    global _EPOCH_PLOT_STYLE_DEFAULTS
-    _EPOCH_PLOT_STYLE_DEFAULTS = {
-        "color_mode": color_mode,
-        "stimulation_linestyle": stimulation_linestyle,
-        "washout_linestyle": washout_linestyle,
-        "baseline_linestyle": baseline_linestyle,
-        "mode3_base_color": mode3_base_color,
-        "mode3_highlight_color": mode3_highlight_color,
-        "mode3_highlight_window_s": mode3_highlight_window_s,
-    }
-    return _EPOCH_PLOT_STYLE_DEFAULTS.copy()
-
-
-def _normalize_condition_name(condition):
-    c = str(condition).strip().lower()
-    if c.startswith("stim"):
-        return "stimulation"
-    if c.startswith("wash"):
-        return "washout"
-    if c.startswith("base"):
-        return "baseline"
-    return c
-
-
-def _normalize_color_mode(color_mode):
-    if isinstance(color_mode, str):
-        key = color_mode.strip().lower().replace("-", "").replace("_", "").replace(" ", "")
-        if key in {"1", "mode1", "regular"}:
-            return 1
-        if key in {"2", "mode2", "stimwashgradient", "gradient"}:
-            return 2
-        if key in {"3", "mode3", "graygreen", "greensegment"}:
-            return 3
-    try:
-        mode = int(color_mode)
-        if mode in {1, 2, 3}:
-            return mode
-    except Exception:
-        pass
-    return 1
-
-
-def _interp_color(c0, c1, t):
-    a = np.asarray(mcolors.to_rgb(c0), dtype=float)
-    b = np.asarray(mcolors.to_rgb(c1), dtype=float)
-    t = float(np.clip(t, 0.0, 1.0))
-    return tuple((1.0 - t) * a + t * b)
-
-
-def _epoch_condition_color_marker_maps(
-    event_meta,
-    color_mode=None,
-    stimulation_linestyle=None,
-    washout_linestyle=None,
-    baseline_linestyle=None,
-    mode3_base_color=None,
-    mode3_highlight_color=None,
-    mode3_highlight_window_s=None,
-):
-    cfg = _EPOCH_PLOT_STYLE_DEFAULTS.copy()
-    if color_mode is not None:
-        cfg["color_mode"] = color_mode
-    if stimulation_linestyle is not None:
-        cfg["stimulation_linestyle"] = stimulation_linestyle
-    if washout_linestyle is not None:
-        cfg["washout_linestyle"] = washout_linestyle
-    if baseline_linestyle is not None:
-        cfg["baseline_linestyle"] = baseline_linestyle
-    if mode3_base_color is not None:
-        cfg["mode3_base_color"] = mode3_base_color
-    if mode3_highlight_color is not None:
-        cfg["mode3_highlight_color"] = mode3_highlight_color
-    if mode3_highlight_window_s is not None:
-        cfg["mode3_highlight_window_s"] = mode3_highlight_window_s
-
-    mode = _normalize_color_mode(cfg["color_mode"])
+def _epoch_condition_color_marker_maps(event_meta):
     epochs = sorted(event_meta["epoch_id"].dropna().astype(int).unique().tolist())
-
-    style_ctx = {
-        "color_mode": mode,
-        "epoch_color": {},
-        "stim_epoch_color": {},
-        "wash_epoch_color": {},
-        "baseline_color": "#6e6e6e",
-        "mode3_base_color": cfg["mode3_base_color"],
-        "mode3_highlight_color": cfg["mode3_highlight_color"],
-        "mode3_highlight_window_s": float(cfg["mode3_highlight_window_s"]),
-    }
-
-    if mode == 1:
-        pal = sns.color_palette("husl", max(3, len(epochs)))
-        style_ctx["epoch_color"] = {ep: pal[i % len(pal)] for i, ep in enumerate(epochs)}
-    elif mode == 2:
-        n = max(1, len(epochs))
-        for i, ep in enumerate(epochs):
-            t = i / max(1, n - 1)
-            style_ctx["stim_epoch_color"][ep] = _interp_color("#9ecae1", "#08519c", t)
-            style_ctx["wash_epoch_color"][ep] = _interp_color("#fcbba1", "#a50f15", t)
-    else:
-        style_ctx["baseline_color"] = cfg["mode3_base_color"]
+    pal = sns.color_palette("husl", max(3, len(epochs)))
+    epoch_color = {ep: pal[i % len(pal)] for i, ep in enumerate(epochs)}
 
     cond_marker = {
         "baseline": "o",
@@ -1690,75 +1592,11 @@ def _epoch_condition_color_marker_maps(
         "washout": "s",
     }
     cond_linestyle = {
-        "baseline": cfg["baseline_linestyle"],
-        "stimulation": cfg["stimulation_linestyle"],
-        "washout": cfg["washout_linestyle"],
+        "baseline": "",
+        "stimulation": "--",
+        "washout": ":",
     }
-    return style_ctx, cond_marker, cond_linestyle
-
-
-def _epoch_condition_color_for(style_ctx, condition, epoch_id, default_color="tab:blue"):
-    cond = _normalize_condition_name(condition)
-    mode = int(style_ctx.get("color_mode", 1))
-    ep = int(epoch_id)
-
-    if mode == 1:
-        return style_ctx.get("epoch_color", {}).get(ep, default_color)
-    if mode == 2:
-        if cond == "stimulation":
-            return style_ctx.get("stim_epoch_color", {}).get(ep, "#08519c")
-        if cond == "washout":
-            return style_ctx.get("wash_epoch_color", {}).get(ep, "#a50f15")
-        return style_ctx.get("baseline_color", "#6e6e6e")
-    return style_ctx.get("mode3_base_color", "#808080")
-
-
-def _epoch_condition_linestyle_for(cond_linestyle, condition):
-    cond = _normalize_condition_name(condition)
-    return cond_linestyle.get(cond, cond_linestyle.get("baseline", "-"))
-
-
-def _plot_mode3_highlight(
-    ax,
-    style_ctx,
-    x,
-    y,
-    time_rel_s,
-    z=None,
-    linewidth=2.0,
-    alpha=0.9,
-    linestyle="-",
-):
-    if int(style_ctx.get("color_mode", 1)) != 3:
-        return
-    t = np.asarray(time_rel_s, dtype=float)
-    mask = np.isfinite(t) & (t >= 0.0) & (t <= float(style_ctx.get("mode3_highlight_window_s", 0.5)))
-    if not np.any(mask):
-        return
-
-    xh = np.where(mask, np.asarray(x, dtype=float), np.nan)
-    yh = np.where(mask, np.asarray(y, dtype=float), np.nan)
-    color = style_ctx.get("mode3_highlight_color", "#2ca25f")
-    if z is None:
-        ax.plot(
-            xh,
-            yh,
-            color=color,
-            linestyle=linestyle,
-            linewidth=linewidth + 0.4,
-            alpha=min(1.0, alpha + 0.15),
-        )
-        return
-    zh = np.where(mask, np.asarray(z, dtype=float), np.nan)
-    ax.plot(
-        xh,
-        yh,
-        zh,
-        color=color,
-        linestyle=linestyle,
-        linewidth=linewidth + 0.4,
-        alpha=min(1.0, alpha + 0.15),
-    )
+    return epoch_color, cond_marker, cond_linestyle
 
 def _epoch_mean_pc_table(Xp, event_meta, time_col="start_time"):
     em = event_meta.copy().reset_index(drop=True)
@@ -1815,7 +1653,7 @@ def plot_epoch_condition_epochmean_scatter(
         raise ValueError(f"Need at least 3 PCs for plotting; got {Xp.shape[0]}.")
 
     em_mean = _epoch_mean_pc_table(Xp, event_meta)
-    style_ctx, cond_marker, _ = _epoch_condition_color_marker_maps(event_meta)
+    epoch_color, cond_marker, _ = _epoch_condition_color_marker_maps(event_meta)
 
     projections = [(0, 1), (1, 2), (0, 2)]
     fig, axes = plt.subplots(1, 3, figsize=(24, 8))
@@ -1830,7 +1668,7 @@ def plot_epoch_condition_epochmean_scatter(
                 s=240,
                 alpha=1.0,
                 marker=cond_marker.get(cond, "o"),
-                color=_epoch_condition_color_for(style_ctx, cond, ep),
+                color=epoch_color.get(ep, "tab:blue"),
                 edgecolors="black",
                 linewidths=1.0,
                 label=f"{cond}, epoch {ep} (n={int(rec['n_trials'])})",
@@ -1880,7 +1718,7 @@ def plot_epoch_condition_epochmean_scatter_3d(
     from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
     em_mean = _epoch_mean_pc_table(Xp, event_meta)
-    style_ctx, cond_marker, _ = _epoch_condition_color_marker_maps(event_meta)
+    epoch_color, cond_marker, _ = _epoch_condition_color_marker_maps(event_meta)
 
     fig = plt.figure(figsize=(13, 10))
     ax = fig.add_subplot(111, projection="3d")
@@ -1895,7 +1733,7 @@ def plot_epoch_condition_epochmean_scatter_3d(
             s=120,
             alpha=1.0,
             marker=cond_marker.get(cond, "o"),
-            color=_epoch_condition_color_for(style_ctx, cond, ep),
+            color=epoch_color.get(ep, "tab:blue"),
             edgecolors="black",
             linewidths=0.8,
             label=f"{cond}, epoch {ep} (n={int(rec['n_trials'])})",
@@ -1950,7 +1788,7 @@ def plot_epoch_condition_epochmean_line_3d_time(
         em_mean = em_mean.copy()
         em_mean["time_rel_s"] = em_mean["epoch_id"].astype(float)
 
-    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(event_meta)
+    epoch_color, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(event_meta)
 
     fig = plt.figure(figsize=(13, 10))
     ax = fig.add_subplot(111, projection="3d")
@@ -1969,13 +1807,12 @@ def plot_epoch_condition_epochmean_line_3d_time(
             y = gaussian_filter1d(y, sigma=smooth_sigma)
             z = gaussian_filter1d(z, sigma=smooth_sigma)
 
-        trend_color = _epoch_condition_color_for(style_ctx, cond, int(g["epoch_id"].iloc[-1]))
         ax.plot(
             x,
             y,
             z,
-            color=trend_color,
-            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
+            color="black",
+            linestyle=cond_linestyle.get(cond, ""),
             linewidth=2.4,
             alpha=0.85,
             label=f"{cond} trend",
@@ -1990,7 +1827,7 @@ def plot_epoch_condition_epochmean_line_3d_time(
                 s=120,
                 alpha=1.0,
                 marker=cond_marker.get(cond, "o"),
-                color=_epoch_condition_color_for(style_ctx, cond, ep),
+                color=epoch_color.get(ep, "tab:blue"),
                 edgecolors="black",
                 linewidths=0.8,
                 label=f"{cond}, epoch {ep} (n={int(rec['n_trials'])})",
@@ -2058,7 +1895,7 @@ def plot_epoch_condition_trial_time_lines_2d(
         raise ValueError("Mismatch between trial_time_scores trials and event_meta rows.")
 
     em = event_meta.copy().reset_index(drop=True)
-    style_ctx, _, cond_linestyle = _epoch_condition_color_marker_maps(em)
+    epoch_color, _, cond_linestyle = _epoch_condition_color_marker_maps(em)
 
     fig, ax = plt.subplots(1, 1, figsize=(13, 10))
     seen = set()
@@ -2082,8 +1919,8 @@ def plot_epoch_condition_trial_time_lines_2d(
         ax.plot(
             x,
             y,
-            color=_epoch_condition_color_for(style_ctx, cond, ep),
-            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
+            color=epoch_color.get(ep, "tab:blue"),
+            linestyle=cond_linestyle.get(cond, ""),
             linewidth=1.6,
             alpha=0.65,
             label=label,
@@ -2092,7 +1929,7 @@ def plot_epoch_condition_trial_time_lines_2d(
             x,
             y,
             s=8,
-            color=_epoch_condition_color_for(style_ctx, cond, ep),
+            color=epoch_color.get(ep, "tab:blue"),
             alpha=0.35,
             linewidths=0,
         )
@@ -2141,7 +1978,7 @@ def plot_epoch_condition_trial_time_lines_3d(
     from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
     em = event_meta.copy().reset_index(drop=True)
-    style_ctx, _, cond_linestyle = _epoch_condition_color_marker_maps(em)
+    epoch_color, _, cond_linestyle = _epoch_condition_color_marker_maps(em)
 
     fig = plt.figure(figsize=(13, 10))
     ax = fig.add_subplot(111, projection="3d")
@@ -2169,8 +2006,8 @@ def plot_epoch_condition_trial_time_lines_3d(
             x,
             y,
             z,
-            color=_epoch_condition_color_for(style_ctx, cond, ep),
-            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
+            color=epoch_color.get(ep, "tab:blue"),
+            linestyle=cond_linestyle.get(cond, ""),
             linewidth=1.6,
             alpha=0.65,
             label=label,
@@ -2180,7 +2017,7 @@ def plot_epoch_condition_trial_time_lines_3d(
             y,
             z,
             s=6,
-            color=_epoch_condition_color_for(style_ctx, cond, ep),
+            color=epoch_color.get(ep, "tab:blue"),
             alpha=0.30,
             linewidths=0,
         )
@@ -2229,7 +2066,7 @@ def plot_epoch_condition_epochmean_scatter_3d_time(
     if "time_rel_s" not in em_mean.columns:
         raise ValueError("time_rel_s missing from epoch-mean table. Check event time column in event_meta.")
 
-    style_ctx, cond_marker, _ = _epoch_condition_color_marker_maps(event_meta)
+    epoch_color, cond_marker, _ = _epoch_condition_color_marker_maps(event_meta)
 
     fig = plt.figure(figsize=(13, 10))
     ax = fig.add_subplot(111, projection="3d")
@@ -2244,7 +2081,7 @@ def plot_epoch_condition_epochmean_scatter_3d_time(
             s=120,
             alpha=1.0,
             marker=cond_marker.get(cond, "o"),
-            color=_epoch_condition_color_for(style_ctx, cond, ep),
+            color=epoch_color.get(ep, "tab:blue"),
             edgecolors="black",
             linewidths=0.8,
             label=f"{cond}, epoch {ep} (n={int(rec['n_trials'])})",
@@ -2304,10 +2141,10 @@ def plot_epoch_condition_trial_time_lines_pc12_time(
         z = np.asarray(bin_time, dtype=float).ravel()
         if z.size != n_bins:
             raise ValueError(f"bin_time length ({z.size}) must equal n_bins ({n_bins}).")
-    z = z.copy()
+    z = z - np.nanmin(z)
 
     em = event_meta.copy().reset_index(drop=True)
-    style_ctx, _, cond_linestyle = _epoch_condition_color_marker_maps(em)
+    epoch_color, _, cond_linestyle = _epoch_condition_color_marker_maps(em)
 
     fig = plt.figure(figsize=(13, 10))
     ax = fig.add_subplot(111, projection="3d")
@@ -2334,29 +2171,18 @@ def plot_epoch_condition_trial_time_lines_pc12_time(
             x,
             y,
             z,
-            color=_epoch_condition_color_for(style_ctx, cond, ep),
-            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
+            color=epoch_color.get(ep, "tab:blue"),
+            linestyle=cond_linestyle.get(cond, ""),
             linewidth=1.6,
             alpha=0.65,
             label=label,
-        )
-        _plot_mode3_highlight(
-            ax,
-            style_ctx,
-            x,
-            y,
-            z,
-            z=z,
-            linewidth=1.6,
-            alpha=0.65,
-            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
         )
         ax.scatter(
             x,
             y,
             z,
             s=6,
-            color=_epoch_condition_color_for(style_ctx, cond, ep),
+            color=epoch_color.get(ep, "tab:blue"),
             alpha=0.30,
             linewidths=0,
         )
@@ -2478,7 +2304,7 @@ def plot_epoch_population_lines_2d(
     if epoch_traj[0].shape[0] < 2:
         raise ValueError(f"Need at least 2 PCs; got {epoch_traj[0].shape[0]}.")
 
-    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(epoch_info_df)
+    epoch_color, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(epoch_info_df)
 
     fig, ax = plt.subplots(1, 1, figsize=(13, 10))
     for i, rec in epoch_info_df.reset_index(drop=True).iterrows():
@@ -2495,8 +2321,8 @@ def plot_epoch_population_lines_2d(
         ax.plot(
             x,
             y,
-            color=_epoch_condition_color_for(style_ctx, cond, ep),
-            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
+            color=epoch_color.get(ep, "tab:blue"),
+            linestyle=cond_linestyle.get(cond, ""),
             linewidth=2.4,
             alpha=0.9,
             label=label,
@@ -2505,7 +2331,7 @@ def plot_epoch_population_lines_2d(
             x,
             y,
             s=12,
-            color=_epoch_condition_color_for(style_ctx, cond, ep),
+            color=epoch_color.get(ep, "tab:blue"),
             marker=cond_marker.get(cond, "o"),
             alpha=0.35,
             linewidths=0,
@@ -2554,7 +2380,7 @@ def plot_epoch_population_lines_3d(
 
     from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
-    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(epoch_info_df)
+    epoch_color, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(epoch_info_df)
 
     fig = plt.figure(figsize=(13, 10))
     ax = fig.add_subplot(111, projection="3d")
@@ -2576,8 +2402,8 @@ def plot_epoch_population_lines_3d(
             x,
             y,
             z,
-            color=_epoch_condition_color_for(style_ctx, cond, ep),
-            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
+            color=epoch_color.get(ep, "tab:blue"),
+            linestyle=cond_linestyle.get(cond, ""),
             linewidth=2.2,
             alpha=0.9,
             label=label,
@@ -2587,7 +2413,7 @@ def plot_epoch_population_lines_3d(
             y,
             z,
             s=8,
-            color=_epoch_condition_color_for(style_ctx, cond, ep),
+            color=epoch_color.get(ep, "tab:blue"),
             marker=cond_marker.get(cond, "o"),
             alpha=0.30,
             linewidths=0,
@@ -2641,9 +2467,9 @@ def plot_epoch_population_lines_pc12_time(
     n_bins = epoch_traj[0].shape[1]
     if bt.size != n_bins:
         raise ValueError(f"bin_time length ({bt.size}) must equal n_bins ({n_bins}).")
-    z = bt.copy()
+    z = bt - np.nanmin(bt)
 
-    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(epoch_info_df)
+    epoch_color, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(epoch_info_df)
 
     fig = plt.figure(figsize=(13, 10))
     ax = fig.add_subplot(111, projection="3d")
@@ -2663,29 +2489,18 @@ def plot_epoch_population_lines_pc12_time(
             x,
             y,
             z,
-            color=_epoch_condition_color_for(style_ctx, cond, ep),
-            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
+            color=epoch_color.get(ep, "tab:blue"),
+            linestyle=cond_linestyle.get(cond, ""),
             linewidth=2.2,
             alpha=0.9,
             label=label,
-        )
-        _plot_mode3_highlight(
-            ax,
-            style_ctx,
-            x,
-            y,
-            z,
-            z=z,
-            linewidth=2.2,
-            alpha=0.9,
-            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
         )
         ax.scatter(
             x,
             y,
             z,
             s=8,
-            color=_epoch_condition_color_for(style_ctx, cond, ep),
+            color=epoch_color.get(ep, "tab:blue"),
             marker=cond_marker.get(cond, "o"),
             alpha=0.30,
             linewidths=0,
@@ -2783,7 +2598,7 @@ def plot_epoch_condition_group_base_trial(
     t0 = em[time_col].min()
     em["time_rel_s"] = em[time_col] - t0
 
-    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(em)
+    epoch_color, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(em)
 
     fig = plt.figure(figsize=(24, 8))
     gs = fig.add_gridspec(1, 3, wspace=0.25)
@@ -2794,7 +2609,7 @@ def plot_epoch_condition_group_base_trial(
     for cond in em["condition"].astype(str).unique():
         em_cond = em[em["condition"].astype(str) == cond]
         marker = cond_marker.get(cond, "o")
-        ls = _epoch_condition_linestyle_for(cond_linestyle, cond)
+        ls = cond_linestyle.get(cond, "")
         for ep in sorted(em_cond["epoch_id"].astype(int).unique()):
             idx = em_cond.index[em_cond["epoch_id"].astype(int) == ep].to_numpy()
             label = f"{cond}, epoch {ep}"
@@ -2802,7 +2617,7 @@ def plot_epoch_condition_group_base_trial(
             ax2d.scatter(
                 Xp[0, idx], Xp[1, idx],
                 s=45, alpha=0.9, marker=marker,
-                color=_epoch_condition_color_for(style_ctx, cond, ep),
+                color=epoch_color.get(ep, "tab:blue"),
                 edgecolors="black", linewidths=0.5,
                 label=label,
             )
@@ -2810,7 +2625,7 @@ def plot_epoch_condition_group_base_trial(
             ax3d.scatter(
                 Xp[0, idx], Xp[1, idx], Xp[2, idx],
                 s=30, alpha=0.85, marker=marker,
-                color=_epoch_condition_color_for(style_ctx, cond, ep),
+                color=epoch_color.get(ep, "tab:blue"),
                 edgecolors="black", linewidths=0.4,
                 label=label,
             )
@@ -2820,7 +2635,7 @@ def plot_epoch_condition_group_base_trial(
                 idx2 = idx[ord_idx]
                 ax3t.plot(
                     Xp[0, idx2], Xp[1, idx2], em.loc[idx2, "time_rel_s"].to_numpy(dtype=float),
-                    color=_epoch_condition_color_for(style_ctx, cond, ep), linestyle=ls, linewidth=2.0,
+                    color=epoch_color.get(ep, "tab:blue"), linestyle=ls, linewidth=2.0,
                     marker=marker, markersize=3.5,
                     markeredgecolor="black", markeredgewidth=0.5,
                     label=label,
@@ -2829,7 +2644,7 @@ def plot_epoch_condition_group_base_trial(
                 ax3t.scatter(
                     Xp[0, idx], Xp[1, idx], em.loc[idx, "time_rel_s"].to_numpy(dtype=float),
                     s=30, alpha=0.85, marker=marker,
-                    color=_epoch_condition_color_for(style_ctx, cond, ep),
+                    color=epoch_color.get(ep, "tab:blue"),
                     edgecolors="black", linewidths=0.4,
                     label=label,
                 )
@@ -2887,7 +2702,7 @@ def plot_epoch_condition_group_epochmean(
         raise ValueError(f"Need at least 3 PCs; got {Xp.shape[0]}.")
 
     em_mean = _epoch_mean_pc_table(Xp, event_meta)
-    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(event_meta)
+    epoch_color, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(event_meta)
 
     fig = plt.figure(figsize=(20, 14))
     gs = fig.add_gridspec(2, 2, wspace=0.2, hspace=0.25)
@@ -2904,21 +2719,21 @@ def plot_epoch_condition_group_epochmean(
         ax2d.scatter(
             rec["pc1"], rec["pc2"],
             s=220, alpha=1.0, marker=cond_marker.get(cond, "o"),
-            color=_epoch_condition_color_for(style_ctx, cond, ep), edgecolors="black", linewidths=0.9,
+            color=epoch_color.get(ep, "tab:blue"), edgecolors="black", linewidths=0.9,
             label=label,
         )
 
         ax3d.scatter(
             rec["pc1"], rec["pc2"], rec["pc3"],
             s=110, alpha=1.0, marker=cond_marker.get(cond, "o"),
-            color=_epoch_condition_color_for(style_ctx, cond, ep), edgecolors="black", linewidths=0.7,
+            color=epoch_color.get(ep, "tab:blue"), edgecolors="black", linewidths=0.7,
             label=label,
         )
 
         ax3t_pts.scatter(
             rec["pc1"], rec["pc2"], rec["time_rel_s"],
             s=110, alpha=1.0, marker=cond_marker.get(cond, "o"),
-            color=_epoch_condition_color_for(style_ctx, cond, ep), edgecolors="black", linewidths=0.7,
+            color=epoch_color.get(ep, "tab:blue"), edgecolors="black", linewidths=0.7,
             label=label,
         )
 
@@ -2936,10 +2751,9 @@ def plot_epoch_condition_group_epochmean(
             y = gaussian_filter1d(y, sigma=smooth_sigma)
             z = gaussian_filter1d(z, sigma=smooth_sigma)
 
-        trend_color = _epoch_condition_color_for(style_ctx, cond, int(g["epoch_id"].iloc[-1]))
         ax3t_line.plot(
             x, y, z,
-            color=trend_color, linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond), linewidth=2.3,
+            color="black", linestyle=cond_linestyle.get(cond, ""), linewidth=2.3,
             alpha=0.85, label=f"{cond} trend",
         )
 
@@ -2948,7 +2762,7 @@ def plot_epoch_condition_group_epochmean(
             ax3t_line.scatter(
                 x[ii], y[ii], z[ii],
                 s=90, alpha=1.0, marker=cond_marker.get(cond, "o"),
-                color=_epoch_condition_color_for(style_ctx, cond, ep), edgecolors="black", linewidths=0.6,
+                color=epoch_color.get(ep, "tab:blue"), edgecolors="black", linewidths=0.6,
                 label=f"{cond}, epoch {ep} (n={int(rec['n_trials'])})",
             )
 
@@ -3019,10 +2833,10 @@ def plot_epoch_condition_group_trial_time(
         zt = np.asarray(bin_time, dtype=float).ravel()
         if zt.size != n_bins:
             raise ValueError(f"bin_time length ({zt.size}) must equal n_bins ({n_bins}).")
-    zt = zt.copy()
+    zt = zt - np.nanmin(zt)
 
     em = event_meta.copy().reset_index(drop=True)
-    style_ctx, _, cond_linestyle = _epoch_condition_color_marker_maps(em)
+    epoch_color, _, cond_linestyle = _epoch_condition_color_marker_maps(em)
 
     fig = plt.figure(figsize=(24, 8))
     gs = fig.add_gridspec(1, 3, wspace=0.25)
@@ -3047,41 +2861,9 @@ def plot_epoch_condition_group_trial_time(
         label2 = label if label not in seen else None
         seen.add(label)
 
-        ax2d.plot(x, y, color=_epoch_condition_color_for(style_ctx, cond, ep), linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond), linewidth=1.5, alpha=0.65, label=label2)
-        _plot_mode3_highlight(
-            ax2d,
-            style_ctx,
-            x,
-            y,
-            zt,
-            linewidth=1.5,
-            alpha=0.65,
-            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
-        )
-        ax3d.plot(x, y, z, color=_epoch_condition_color_for(style_ctx, cond, ep), linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond), linewidth=1.4, alpha=0.65, label=label2)
-        _plot_mode3_highlight(
-            ax3d,
-            style_ctx,
-            x,
-            y,
-            zt,
-            z=z,
-            linewidth=1.4,
-            alpha=0.65,
-            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
-        )
-        ax3t.plot(x, y, zt, color=_epoch_condition_color_for(style_ctx, cond, ep), linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond), linewidth=1.5, alpha=0.65, label=label2)
-        _plot_mode3_highlight(
-            ax3t,
-            style_ctx,
-            x,
-            y,
-            zt,
-            z=zt,
-            linewidth=1.5,
-            alpha=0.65,
-            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
-        )
+        ax2d.plot(x, y, color=epoch_color.get(ep, "tab:blue"), linestyle=cond_linestyle.get(cond, ""), linewidth=1.5, alpha=0.65, label=label2)
+        ax3d.plot(x, y, z, color=epoch_color.get(ep, "tab:blue"), linestyle=cond_linestyle.get(cond, ""), linewidth=1.4, alpha=0.65, label=label2)
+        ax3t.plot(x, y, zt, color=epoch_color.get(ep, "tab:blue"), linestyle=cond_linestyle.get(cond, ""), linewidth=1.5, alpha=0.65, label=label2)
 
     ax2d.set_title("2D: Per-trial time-bin lines (PC1-PC2)")
     ax2d.set_xlabel("PC 1")
@@ -3142,9 +2924,9 @@ def plot_epoch_condition_group_epoch_population(
     n_bins = epoch_traj[0].shape[1]
     if bt.size != n_bins:
         raise ValueError(f"bin_time length ({bt.size}) must equal n_bins ({n_bins}).")
-    zt = bt.copy()
+    zt = bt - np.nanmin(bt)
 
-    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(epoch_info_df)
+    epoch_color, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(epoch_info_df)
 
     fig = plt.figure(figsize=(24, 8))
     gs = fig.add_gridspec(1, 3, wspace=0.25)
@@ -3166,46 +2948,14 @@ def plot_epoch_condition_group_epoch_population(
             y = gaussian_filter1d(y, sigma=smooth_sigma)
             z = gaussian_filter1d(z, sigma=smooth_sigma)
 
-        ax2d.plot(x, y, color=_epoch_condition_color_for(style_ctx, cond, ep), linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond), linewidth=2.1, alpha=0.9, label=label)
-        _plot_mode3_highlight(
-            ax2d,
-            style_ctx,
-            x,
-            y,
-            zt,
-            linewidth=2.1,
-            alpha=0.9,
-            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
-        )
-        ax2d.scatter(x, y, s=10, color=_epoch_condition_color_for(style_ctx, cond, ep), marker=cond_marker.get(cond, "o"), alpha=0.30, linewidths=0)
+        ax2d.plot(x, y, color=epoch_color.get(ep, "tab:blue"), linestyle=cond_linestyle.get(cond, ""), linewidth=2.1, alpha=0.9, label=label)
+        ax2d.scatter(x, y, s=10, color=epoch_color.get(ep, "tab:blue"), marker=cond_marker.get(cond, "o"), alpha=0.30, linewidths=0)
 
-        ax3d.plot(x, y, z, color=_epoch_condition_color_for(style_ctx, cond, ep), linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond), linewidth=2.0, alpha=0.9, label=label)
-        _plot_mode3_highlight(
-            ax3d,
-            style_ctx,
-            x,
-            y,
-            zt,
-            z=z,
-            linewidth=2.0,
-            alpha=0.9,
-            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
-        )
-        ax3d.scatter(x, y, z, s=8, color=_epoch_condition_color_for(style_ctx, cond, ep), marker=cond_marker.get(cond, "o"), alpha=0.25, linewidths=0)
+        ax3d.plot(x, y, z, color=epoch_color.get(ep, "tab:blue"), linestyle=cond_linestyle.get(cond, ""), linewidth=2.0, alpha=0.9, label=label)
+        ax3d.scatter(x, y, z, s=8, color=epoch_color.get(ep, "tab:blue"), marker=cond_marker.get(cond, "o"), alpha=0.25, linewidths=0)
 
-        ax3t.plot(x, y, zt, color=_epoch_condition_color_for(style_ctx, cond, ep), linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond), linewidth=2.0, alpha=0.9, label=label)
-        _plot_mode3_highlight(
-            ax3t,
-            style_ctx,
-            x,
-            y,
-            zt,
-            z=zt,
-            linewidth=2.0,
-            alpha=0.9,
-            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
-        )
-        ax3t.scatter(x, y, zt, s=8, color=_epoch_condition_color_for(style_ctx, cond, ep), marker=cond_marker.get(cond, "o"), alpha=0.25, linewidths=0)
+        ax3t.plot(x, y, zt, color=epoch_color.get(ep, "tab:blue"), linestyle=cond_linestyle.get(cond, ""), linewidth=2.0, alpha=0.9, label=label)
+        ax3t.scatter(x, y, zt, s=8, color=epoch_color.get(ep, "tab:blue"), marker=cond_marker.get(cond, "o"), alpha=0.25, linewidths=0)
 
     ax2d.set_title("2D: One line per epoch (PC1-PC2)")
     ax2d.set_xlabel("PC 1")
@@ -3334,5 +3084,3 @@ def plot_pca_scree(
         print(f"PCA scree plot saved to {out}")
 
 # === END GROUPED EPOCH PLOT SETS ===
-
-
