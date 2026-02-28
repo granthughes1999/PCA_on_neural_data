@@ -225,6 +225,160 @@ def build_units_probe_dict(df_units: pd.DataFrame, probe_col: str | None = None)
         out[str(probe)] = df_units[probe_key.astype(str) == str(probe)].copy().reset_index(drop=True)
     return out
 
+def load_or_build_processed_bundle(
+    *,
+    processed_bundle_dir: str | Path | None = None,
+    nwb_path_for_auto_build: str | Path = "",
+    bombcell_root_for_auto_build: str | Path = "",
+    use_bombcell_if_available: bool = True,
+    auto_build_bundle_if_missing: bool = True,
+    auto_rebuild_if_bombcell_missing: bool = True,
+    required_filenames: tuple[str, ...] = ("merged_dic.pkl", "stim_df.pkl", "pca_event_meta.pkl"),
+    verbose: bool = True,
+) -> tuple[
+    dict[str, Any],  # bundle
+    dict[str, pd.DataFrame],  # merged_dic
+    pd.DataFrame,  # stim_df
+    pd.DataFrame,  # df_stim (alias)
+    pd.DataFrame,  # pca_event_meta
+    dict[str, Any],  # extras
+    dict[str, Any],  # meta
+    Path,  # processed_bundle_dir
+]:
+    """
+    Load an existing processed bundle, or build it from NWB if missing / rebuild required.
+
+    Notes
+    -----
+    - Bundle files are expected to match save_processed_bundle/load_processed_bundle:
+      merged_dic.pkl, stim_df.pkl, pca_event_meta.pkl (and optionally extras.pkl, meta.json).
+    - If auto_rebuild_if_bombcell_missing=True, will rebuild when merged_dic lacks:
+      in_brainRegion and brain_region, but only if a Bombcell root is provided.
+    """
+
+    if processed_bundle_dir is None:
+        processed_bundle_dir = Path("processed_data") / "bundle_latest"
+    processed_bundle_dir = Path(processed_bundle_dir)
+
+    bombcell_root_str = str(bombcell_root_for_auto_build).strip()
+    nwb_path_str = str(nwb_path_for_auto_build).strip()
+
+    if use_bombcell_if_available and bombcell_root_str == "" and verbose:
+        print(
+            "Bombcell root not set. Set bombcell_root_for_auto_build to merge "
+            "in_brainRegion/brain_region/bc_label."
+        )
+
+    required_files = [processed_bundle_dir / fn for fn in required_filenames]
+    bundle_exists = all(f.exists() for f in required_files)
+    rebuild_required = (not bundle_exists)
+
+    # If bundle exists but lacks Bombcell columns, optionally rebuild
+    if bundle_exists and auto_rebuild_if_bombcell_missing:
+        try:
+            _bundle_tmp = load_processed_bundle(processed_bundle_dir)
+            _md = _bundle_tmp["merged_dic"]
+            _probe0 = sorted(list(_md.keys()))[0]
+            _cols0 = set(_md[_probe0].columns)
+
+            _has_bombcell_cols = ("in_brainRegion" in _cols0) and ("brain_region" in _cols0)
+            if (not _has_bombcell_cols) and use_bombcell_if_available and bombcell_root_str != "":
+                if verbose:
+                    print("Existing bundle missing Bombcell columns. Rebuild requested.")
+                rebuild_required = True
+        except Exception as e:
+            if verbose:
+                print("Could not inspect existing bundle; rebuild requested:", e)
+            rebuild_required = True
+
+    # Build if required
+    if rebuild_required and auto_build_bundle_if_missing:
+        if nwb_path_str == "":
+            raise ValueError(
+                "Processed bundle is missing/rebuild requested and nwb_path_for_auto_build is empty. "
+                "Set nwb_path_for_auto_build to your recording .nwb path (or parent folder) and re-run."
+            )
+
+        if verbose:
+            print("Building processed bundle from NWB:", nwb_path_for_auto_build)
+
+        tables = load_nwb_tables(nwb_path_for_auto_build)
+        df_units = tables["df_units"]
+        df_trials = tables["df_trials"]
+
+        if df_units.empty:
+            raise ValueError("NWB units table is empty; cannot build processed bundle.")
+        if df_trials.empty:
+            raise ValueError("NWB trials table is empty; cannot build processed bundle.")
+
+        qm_dic = None
+        cluster_dic = None
+        bombcell_report = None
+
+        # Optional Bombcell merge
+        if use_bombcell_if_available and bombcell_root_str != "":
+            probe_col = find_probe_col(df_units)
+            if probe_col is None:
+                if verbose:
+                    print("Bombcell merge skipped: no probe column found in df_units.")
+            else:
+                probes = extract_probe_letters(df_units, probe_col=probe_col)
+                if len(probes) == 0:
+                    if verbose:
+                        print("Bombcell merge skipped: could not infer probe labels from df_units probe column.")
+                else:
+                    try:
+                        qm_dic, cluster_dic, bombcell_report = load_bombcell_metrics(
+                            bombcell_root=bombcell_root_for_auto_build,
+                            probes=probes,
+                        )
+                        if verbose:
+                            print("Bombcell loaded qmetrics probes:", sorted(list(qm_dic.keys())) if qm_dic else [])
+                            print("Bombcell loaded cluster probes:", sorted(list(cluster_dic.keys())) if cluster_dic else [])
+                            if bombcell_report is not None and len(bombcell_report.get("missing", [])) > 0:
+                                print("Bombcell missing entries:", bombcell_report["missing"][:10])
+                    except Exception as e:
+                        if verbose:
+                            print("Bombcell load failed; continuing without Bombcell merge:", e)
+                        qm_dic = None
+                        cluster_dic = None
+                        bombcell_report = {"error": str(e)}
+
+        build_and_save_processed_bundle(
+            out_dir=processed_bundle_dir,
+            df_units=df_units,
+            df_trials=df_trials,
+            qm_dic=qm_dic,
+            cluster_dic=cluster_dic,
+            all_trial_start_times=None,
+            baseline_trials_idx=None,
+            optoicalStim_trials_idx=None,
+            washout_trials_idx=None,
+            extras={
+                "auto_built_from_nwb": str(nwb_path_for_auto_build),
+                "bombcell_root": bombcell_root_str if bombcell_root_str != "" else None,
+                "bombcell_report": bombcell_report,
+            },
+        )
+
+        if verbose:
+            print("Built processed bundle:", processed_bundle_dir)
+
+    # Load bundle
+    bundle = load_processed_bundle(processed_bundle_dir)
+    merged_dic = bundle["merged_dic"]
+    stim_df = bundle["stim_df"]
+    df_stim = stim_df  # alias
+    pca_event_meta = bundle["pca_event_meta"]
+    extras = bundle.get("extras", {})
+    meta = bundle.get("meta", {})
+
+    if verbose:
+        print("Loaded bundle:", processed_bundle_dir)
+        print("Meta:", meta)
+        print("pca_event_meta rows:", len(pca_event_meta))
+
+    return bundle, merged_dic, stim_df, df_stim, pca_event_meta, extras, meta, processed_bundle_dir
 
 def load_bombcell_metrics(
     bombcell_root: str | Path,
@@ -293,6 +447,309 @@ def load_bombcell_metrics(
 
     return qm_dic, cluster_dic, report
 
+
+def check_stim_event_timing(df_stim, max_window=4.0, show_detailed_output=True) -> dict[str, Any]:
+    """
+    Compute average time differences between task events and return
+    averages, counts, and the actual valid time pairs used.
+
+    Parameters
+    ----------
+    df_stim : pandas.DataFrame
+        Must contain columns ['stimulus', 'start_time'].
+    max_window : float
+        Maximum allowed time difference (seconds) for valid pairing.
+
+    Returns
+    -------
+    results : dict
+        Dictionary containing averages, pair counts, and valid_pairs.
+    """
+
+    import numpy as np
+
+    # --- Extract event times ---
+    all_stimROI_triggers = df_stim[df_stim['stimulus'] == 'reachInit_stimROI_timestamps']
+    stim_ROI_df          = df_stim[df_stim['stimulus'] == 'stimROI_timestamps']
+    optical_df           = df_stim[df_stim['stimulus'] == 'optical_timestamps']
+    tone2_df             = df_stim[df_stim['stimulus'] == 'tone2_timestamps']
+    tone1_df             = df_stim[df_stim['stimulus'] == 'tone1_timestamps']
+
+    tone1_start_times = tone1_df['start_time'].values
+    tone2_start_times = tone2_df['start_time'].values
+    stimROI_start_times = stim_ROI_df['start_time'].values
+    optical_start_times = optical_df['start_time'].values
+    all_stimROI_triggers_start_times = all_stimROI_triggers['start_time'].values
+
+    def compute_avg_diff(reference_times, target_times, max_window):
+        valid_pairs = []
+
+        if len(reference_times) == 0 or len(target_times) == 0:
+            return np.nan, 0, valid_pairs
+
+        for t_ref in reference_times:
+            idx = np.argmin(np.abs(target_times - t_ref))
+            closest = target_times[idx]
+            if 0 < closest - t_ref < max_window:
+                valid_pairs.append((t_ref, closest))
+
+        if len(valid_pairs) == 0:
+            return np.nan, 0, valid_pairs
+
+        avg_diff = np.mean([t2 - t1 for t1, t2 in valid_pairs])
+        return avg_diff, len(valid_pairs), valid_pairs
+
+    # --- Compute pairwise relationships ---
+    avg_t1_t2, n_t1_t2, pairs_t1_t2 = compute_avg_diff(tone1_start_times, tone2_start_times, max_window)
+    avg_t1_stimROI, n_t1_stimROI, pairs_t1_stimROI = compute_avg_diff(tone1_start_times, stimROI_start_times, max_window)
+    avg_t2_stimROI, n_t2_stimROI, pairs_t2_stimROI = compute_avg_diff(tone2_start_times, stimROI_start_times, max_window)
+    avg_t1_allStimROI, n_t1_allStimROI, pairs_t1_allStimROI = compute_avg_diff(tone1_start_times, all_stimROI_triggers_start_times, max_window)
+    avg_t2_allStimROI, n_t2_allStimROI, pairs_t2_allStimROI = compute_avg_diff(tone2_start_times, all_stimROI_triggers_start_times, max_window)
+    avg_allStimROI_stimROI, n_allStimROI_stimROI, pairs_allStimROI_stimROI = compute_avg_diff(
+        all_stimROI_triggers_start_times, stimROI_start_times, max_window
+    )
+
+    # --- Print structured summary ---
+    print('=== Average time differences between events (valid pairs within expected window): ===')
+
+    print('\n---- Expected ~2 s -----')
+    print('tone1 and tone2: ',
+          None if np.isnan(avg_t1_t2) else round(avg_t1_t2, 2),
+          f'({n_t1_t2} pairs)\n')
+
+    print('---- These two should be similar -----')
+    print('tone1 and stimROI:             ',
+          None if np.isnan(avg_t1_stimROI) else round(avg_t1_stimROI, 2),
+          f'({n_t1_stimROI} pairs)')
+    print('tone1 and all_stimROI_triggers:',
+          None if np.isnan(avg_t1_allStimROI) else round(avg_t1_allStimROI, 2),
+          f'({n_t1_allStimROI} pairs)\n')
+
+    print('---- These two should be similar -----')
+    print('tone2 and stimROI:             ',
+          None if np.isnan(avg_t2_stimROI) else round(avg_t2_stimROI, 2),
+          f'({n_t2_stimROI} pairs)')
+    print('tone2 and all_stimROI_triggers:',
+          None if np.isnan(avg_t2_allStimROI) else round(avg_t2_allStimROI, 2),
+          f'({n_t2_allStimROI} pairs)\n')
+
+    print('---- Should be near zero -----')
+    print('all_stimROI_triggers and stimROI:',
+          None if np.isnan(avg_allStimROI_stimROI) else round(avg_allStimROI_stimROI, 2),
+          f'({n_allStimROI_stimROI} pairs)')
+
+    # --- Return structured results ---
+    results = {
+        'tone1_tone2': {
+            'avg_diff': avg_t1_t2,
+            'n_pairs': n_t1_t2,
+            'valid_pairs': pairs_t1_t2
+        },
+        'tone1_stimROI': {
+            'avg_diff': avg_t1_stimROI,
+            'n_pairs': n_t1_stimROI,
+            'valid_pairs': pairs_t1_stimROI
+        },
+        'tone2_stimROI': {
+            'avg_diff': avg_t2_stimROI,
+            'n_pairs': n_t2_stimROI,
+            'valid_pairs': pairs_t2_stimROI
+        },
+        'tone1_allStimROI': {
+            'avg_diff': avg_t1_allStimROI,
+            'n_pairs': n_t1_allStimROI,
+            'valid_pairs': pairs_t1_allStimROI
+        },
+        'tone2_allStimROI': {
+            'avg_diff': avg_t2_allStimROI,
+            'n_pairs': n_t2_allStimROI,
+            'valid_pairs': pairs_t2_allStimROI
+        },
+        'allStimROI_stimROI': {
+            'avg_diff': avg_allStimROI_stimROI,
+            'n_pairs': n_allStimROI_stimROI,
+            'valid_pairs': pairs_allStimROI_stimROI
+        }
+    }
+
+    if show_detailed_output:
+        print('\n=== Detailed valid time pairs (within expected window) ===')
+        for key, data in results.items():
+            print(f'\n--- {key} ---')
+            for t1, t2 in data['valid_pairs']:
+                print(f'  {t1:.3f} s  -->  {t2:.3f} s  (diff: {t2 - t1:.3f} s)')
+
+    return results
+
+def build_pca_event_meta_and_event_times(
+    stim_df,
+    baseline_trials_idx,
+    optoicalStim_trials_idx,
+    washout_trials_idx,
+    *,
+    drop_frame_events=True,
+    frame_event_labels=("frame_events_timestamps", "frame_events_timestamp"),
+    trigger_stimulus="reachInit_stimROI_timestamps",
+    stimROI_stimulus="stimROI_timestamps",
+    optical_stimulus="optical_timestamps",
+    tone2_stimulus="tone2_timestamps",
+    tone1_stimulus="tone1_timestamps",
+):
+    """
+    Returns
+    -------
+    pca_event_meta : pd.DataFrame
+        Per-trial metadata aligned to trigger_stimulus start times.
+    tone1_start_times, tone2_start_times, stimROI_start_times, optical_start_times, all_stimROI_triggers_start_times : np.ndarray
+        Raw event start times extracted from stim_df (after optional frame-event removal).
+    """
+
+    import numpy as np
+    import pandas as pd
+
+    if "stimulus" not in stim_df.columns:
+        raise ValueError("stim_df has no 'stimulus' column")
+    if "start_time" not in stim_df.columns:
+        raise ValueError("stim_df has no 'start_time' column")
+
+    # Optionally drop frame-events rows
+    df_stim = stim_df.copy()
+    if drop_frame_events:
+        df_stim = df_stim[
+            ~df_stim["stimulus"].astype(str).str.strip().str.lower().isin(
+                [s.strip().lower() for s in frame_event_labels]
+            )
+        ].reset_index(drop=True)
+
+    # Extract start times for all relevant stimulus events
+    all_stimROI_triggers = df_stim[df_stim["stimulus"] == trigger_stimulus]
+    stim_ROI_df = df_stim[df_stim["stimulus"] == stimROI_stimulus]
+    optical_df = df_stim[df_stim["stimulus"] == optical_stimulus]
+    tone2_df = df_stim[df_stim["stimulus"] == tone2_stimulus]
+    tone1_df = df_stim[df_stim["stimulus"] == tone1_stimulus]
+
+    tone1_start_times = tone1_df["start_time"].to_numpy()
+    tone2_start_times = tone2_df["start_time"].to_numpy()
+    stimROI_start_times = stim_ROI_df["start_time"].to_numpy()
+    optical_start_times = optical_df["start_time"].to_numpy()
+    all_stimROI_triggers_start_times = all_stimROI_triggers["start_time"].to_numpy()
+
+    def _flatten_idx(x):
+        if isinstance(x, np.ndarray):
+            x = x.tolist()
+        if not isinstance(x, (list, tuple)):
+            return [int(x)]
+        out = []
+        for item in x:
+            if isinstance(item, (list, tuple, np.ndarray)):
+                out.extend(_flatten_idx(item))
+            else:
+                out.append(int(item))
+        return out
+
+    def _normalize_trial_indices(idx_nested, n_trials):
+        """
+        Accept nested trial index/number groups and normalize to 0-based integer indices.
+        Handles 1-based trial numbers automatically.
+        Returns list[list[int]] preserving epoch nesting.
+        """
+        if isinstance(idx_nested, np.ndarray):
+            idx_nested = idx_nested.tolist()
+        if not isinstance(idx_nested, (list, tuple)):
+            idx_nested = [idx_nested]
+
+        epochs = []
+        for ep in idx_nested:
+            if isinstance(ep, (list, tuple, np.ndarray)):
+                epochs.append([int(v) for v in _flatten_idx(ep)])
+            else:
+                epochs.append([int(ep)])
+
+        all_vals = [v for ep in epochs for v in ep]
+        if len(all_vals) == 0:
+            return [[] for _ in epochs]
+
+        max_v = max(all_vals)
+        min_v = min(all_vals)
+
+        # 1-based if max <= n_trials and min >= 1
+        one_based = (max_v <= n_trials) and (min_v >= 1)
+
+        norm = []
+        for ep in epochs:
+            ep0 = [v - 1 for v in ep] if one_based else [v for v in ep]
+            ep0 = [v for v in ep0 if 0 <= v < n_trials]
+            norm.append(sorted(list(set(ep0))))
+        return norm
+
+    if len(all_stimROI_triggers_start_times) == 0:
+        raise ValueError(f"No events found for trigger_stimulus='{trigger_stimulus}'")
+
+    all_stimROI_triggers_start_times = np.asarray(all_stimROI_triggers_start_times, dtype=float)
+    n_trials_total = len(all_stimROI_triggers_start_times)
+
+    baseline_idx_epochs = _normalize_trial_indices(baseline_trials_idx, n_trials_total)
+    stim_idx_epochs = _normalize_trial_indices(optoicalStim_trials_idx, n_trials_total)
+    wash_idx_epochs = _normalize_trial_indices(washout_trials_idx, n_trials_total)
+
+    # Build metadata rows
+    rows = []
+
+    # baseline epoch_id=0
+    for ep_idx in baseline_idx_epochs:
+        for tidx in ep_idx:
+            rows.append(
+                {
+                    "trial_index0": int(tidx),
+                    "trial_number": int(tidx + 1),
+                    "start_time": float(all_stimROI_triggers_start_times[tidx]),
+                    "condition": "baseline",
+                    "epoch_id": 0,
+                    "condition_epoch": "baseline_epoch",
+                }
+            )
+
+    for ep_i, ep_idx in enumerate(stim_idx_epochs, start=1):
+        for tidx in ep_idx:
+            rows.append(
+                {
+                    "trial_index0": int(tidx),
+                    "trial_number": int(tidx + 1),
+                    "start_time": float(all_stimROI_triggers_start_times[tidx]),
+                    "condition": "stimulation",
+                    "epoch_id": int(ep_i),
+                    "condition_epoch": f"stimulation_epoch_{ep_i}",
+                }
+            )
+
+    for ep_i, ep_idx in enumerate(wash_idx_epochs, start=1):
+        for tidx in ep_idx:
+            rows.append(
+                {
+                    "trial_index0": int(tidx),
+                    "trial_number": int(tidx + 1),
+                    "start_time": float(all_stimROI_triggers_start_times[tidx]),
+                    "condition": "washout",
+                    "epoch_id": int(ep_i),
+                    "condition_epoch": f"washout_epoch_{ep_i}",
+                }
+            )
+
+    pca_event_meta = (
+        pd.DataFrame(rows)
+        .drop_duplicates(subset=["trial_index0"])
+        .sort_values("trial_index0")
+        .reset_index(drop=True)
+    )
+
+    return (
+        pca_event_meta,
+        tone1_start_times,
+        tone2_start_times,
+        stimROI_start_times,
+        optical_start_times,
+        all_stimROI_triggers_start_times,
+    )
 
 def merge_units_with_metrics(
     df_units_dic: dict[str, pd.DataFrame],

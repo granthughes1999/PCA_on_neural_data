@@ -2994,4 +2994,93 @@ def plot_epoch_condition_group_epoch_population(
         plt.close()
         print(f"PCA plot saved to {out}")
 
+def plot_pca_scree(
+    evr,
+    title_prefix="",
+    subtitle="",
+    probe="unknown",
+    brain_region="unknown",
+    run_label="",
+    cumulative=True,
+    max_components=None,
+    save_root: str | Path = "master/results",
+    show_plots=False,
+):
+    """
+    Plot and save a scree chart for any PCA run using explained variance ratios.
+
+    Parameters
+    ----------
+    evr : array-like
+        Explained variance ratio per component (e.g., returned as `evr` from PCA run helpers).
+    cumulative : bool
+        If True, overlays cumulative explained variance (%).
+    max_components : int | None
+        If set, only the first N components are plotted.
+    run_label : str
+        Optional suffix to distinguish multiple scree plots for the same probe/region.
+    """
+    evr_arr = np.asarray(evr, dtype=float).ravel()
+    evr_arr = evr_arr[np.isfinite(evr_arr)]
+    if evr_arr.size == 0:
+        raise ValueError("evr is empty after removing non-finite values.")
+
+    if max_components is not None:
+        n_keep = int(max_components)
+        if n_keep <= 0:
+            raise ValueError("max_components must be >= 1 when provided.")
+        evr_arr = evr_arr[:n_keep]
+
+    pcs = np.arange(1, evr_arr.size + 1, dtype=int)
+    evr_pct = evr_arr * 100.0
+    cum_pct = np.cumsum(evr_arr) * 100.0
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.bar(pcs, evr_pct, color="#4C72B0", alpha=0.85, label="Per-PC EVR (%)")
+    ax.plot(pcs, evr_pct, color="#1F3A5F", marker="o", linewidth=1.6, markersize=4)
+    ax.set_xlabel("Principal Component")
+    ax.set_ylabel("Explained Variance (%)")
+    ax.set_xticks(pcs)
+    ax.grid(axis="y", alpha=0.25, linestyle="--", linewidth=0.8)
+
+    if cumulative:
+        ax2 = ax.twinx()
+        ax2.plot(pcs, cum_pct, color="#DD8452", marker="s", linewidth=2.0, markersize=4, label="Cumulative EVR (%)")
+        ax2.set_ylabel("Cumulative Explained Variance (%)")
+        ax2.set_ylim(0, 102)
+
+    main_title = "PCA Scree Plot" if title_prefix == "" else f"{title_prefix} | PCA Scree Plot"
+    fig.suptitle(main_title, fontsize=14, y=0.98)
+    if subtitle:
+        fig.text(0.5, 0.94, subtitle, ha="center", va="center", fontsize=10)
+
+    n_show = min(3, evr_arr.size)
+    top_text = f"Top {n_show} cumulative EVR: {cum_pct[n_show - 1]:.2f}%"
+    fig.text(0.5, 0.90 if subtitle else 0.93, top_text, ha="center", va="center", fontsize=10)
+
+    handles, labels = ax.get_legend_handles_labels()
+    if cumulative:
+        h2, l2 = ax2.get_legend_handles_labels()
+        handles = handles + h2
+        labels = labels + l2
+    if len(handles) > 0:
+        ax.legend(handles, labels, frameon=False, loc="upper right")
+
+    plt.tight_layout(rect=[0, 0, 1, 0.90])
+
+    save_path = Path(save_root) / "PCA_by_Epoch" / "Scree"
+    save_path.mkdir(parents=True, exist_ok=True)
+    run_suffix = _sanitize_name(run_label).strip("_")
+    fname = f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_pca_scree"
+    if run_suffix:
+        fname = f"{fname}_{run_suffix}"
+    out = save_path / f"{fname}.png"
+    plt.savefig(out, dpi=300, bbox_inches="tight")
+
+    if show_plots:
+        plt.show()
+    else:
+        plt.close()
+        print(f"PCA scree plot saved to {out}")
+
 # === END GROUPED EPOCH PLOT SETS ===
