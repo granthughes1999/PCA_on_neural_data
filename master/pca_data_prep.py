@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import pickle
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -148,6 +149,55 @@ def find_probe_col(df: pd.DataFrame):
     return None
 
 
+def normalize_probe_value(v: Any) -> str | None:
+    """
+    Normalize probe identifiers to a stable key.
+    Examples:
+      "A" -> "A"
+      "probeA" -> "A"
+      "kilosort4_B" -> "B"
+    """
+    if pd.isna(v):
+        return None
+    s = str(v).strip()
+    if s == "":
+        return None
+    s_up = s.upper()
+    # Direct single-letter probe labels.
+    if re.fullmatch(r"[A-Z]", s_up):
+        return s_up
+
+    # Common explicit patterns.
+    patterns = [
+        r"KILOSORT\s*4[_\-\s]*([A-Z])(?:$|[_\-\s])",
+        r"PROBE[_\-\s]*([A-Z])(?:$|[_\-\s])",
+        r"^([A-Z])[_\-\s]*PROBE$",
+        r"PROBE([A-Z])$",
+    ]
+    for pat in patterns:
+        m = re.search(pat, s_up)
+        if m:
+            return m.group(1)
+
+    # Token fallback: if any separator-delimited token is a single letter.
+    for tok in re.split(r"[_\-\s]+", s_up):
+        if re.fullmatch(r"[A-Z]", tok):
+            return tok
+
+    # No unambiguous probe label found.
+    return None
+
+
+def extract_probe_letters(df_units: pd.DataFrame, probe_col: str | None = None) -> list[str]:
+    if probe_col is None:
+        probe_col = find_probe_col(df_units)
+    if probe_col is None:
+        return []
+    vals = df_units[probe_col].map(normalize_probe_value).dropna().astype(str)
+    vals = vals[vals.str.len() > 0]
+    return sorted(vals.unique().tolist())
+
+
 def find_kslabel_col(df: pd.DataFrame):
     for c in ["KSlabel", "KSLabel", "kslabel", "ks_label", "label", "quality"]:
         if c in df.columns:
@@ -169,10 +219,79 @@ def build_units_probe_dict(df_units: pd.DataFrame, probe_col: str | None = None)
         raise ValueError(f"No probe column found in df_units. Columns: {list(df_units.columns)}")
 
     out: dict[str, pd.DataFrame] = {}
-    probes = df_units[probe_col].dropna().astype(str).unique().tolist()
+    probe_key = df_units[probe_col].map(normalize_probe_value)
+    probes = probe_key.dropna().astype(str).unique().tolist()
     for probe in sorted(probes):
-        out[str(probe)] = df_units[df_units[probe_col].astype(str) == str(probe)].copy().reset_index(drop=True)
+        out[str(probe)] = df_units[probe_key.astype(str) == str(probe)].copy().reset_index(drop=True)
     return out
+
+
+def load_bombcell_metrics(
+    bombcell_root: str | Path,
+    probes: list[str] | None = None,
+) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, list[str]]]:
+    """
+    Load Bombcell quality_metrics.csv and cluster classification TSV files by probe.
+
+    Expected layout under bombcell_root:
+      - .../kilosort4_A/quality_metrics.csv
+      - .../kilosort4_A/cluster_bc_classificationReason.tsv
+      (same pattern for B/C/...)
+    """
+    root = Path(bombcell_root)
+    if not root.exists():
+        raise FileNotFoundError(f"Bombcell root not found: {root}")
+
+    if probes is None:
+        probes = [chr(x) for x in range(ord("A"), ord("F") + 1)]
+    probes = [str(p).strip().upper() for p in probes]
+
+    qm_dic: dict[str, pd.DataFrame] = {}
+    cluster_dic: dict[str, pd.DataFrame] = {}
+    report: dict[str, list[str]] = {"loaded_qm": [], "loaded_cluster": [], "missing": []}
+
+    # Pre-index potential probe dirs once
+    ks_probe_dirs = [d for d in root.rglob("*") if d.is_dir() and d.name.lower().startswith("kilosort4_")]
+    dir_map = {}
+    for d in ks_probe_dirs:
+        suffix = d.name.lower().replace("kilosort4_", "").strip()
+        if len(suffix) > 0:
+            dir_map[suffix[0].upper()] = d
+
+    for probe in probes:
+        pdir = dir_map.get(probe)
+        if pdir is None:
+            report["missing"].append(f"{probe}: probe folder (kilosort4_{probe})")
+            continue
+
+        # quality metrics (support common case variants)
+        qm_candidates = [
+            pdir / "bombcell" / f"probe_{probe}_quality_metrics.csv",
+            pdir / "bombcell" / f"Probe_{probe}_quality_metrics.csv",
+        ]
+        qm_path = next((x for x in qm_candidates if x.exists()), None)
+        if qm_path is not None:
+            qm = pd.read_csv(qm_path)
+            qm_dic[probe] = qm
+            report["loaded_qm"].append(probe)
+        else:
+            report["missing"].append(f"{probe}: probe_{probe}_quality_metrics.csv")
+
+        # cluster classification TSV (support a few filename variants)
+        cluster_candidates = [
+            pdir / "cluster_bc_classificationReason.tsv",
+            pdir / "cluster_bc_classificationreason.tsv",
+            pdir / "cluster_bc_classification_reason.tsv",
+        ]
+        cpath = next((x for x in cluster_candidates if x.exists()), None)
+        if cpath is not None:
+            cl = pd.read_csv(cpath, sep="\t")
+            cluster_dic[probe] = cl
+            report["loaded_cluster"].append(probe)
+        else:
+            report["missing"].append(f"{probe}: cluster_bc_classificationReason.tsv")
+
+    return qm_dic, cluster_dic, report
 
 
 def merge_units_with_metrics(
@@ -183,17 +302,33 @@ def merge_units_with_metrics(
     """
     Merge probe-unit tables with optional quality-metrics and cluster tables.
     """
+    def _ensure_cluster_id(df: pd.DataFrame) -> pd.DataFrame:
+        out = df.copy().reset_index(drop=True)
+        if "cluster_id" in out.columns:
+            out["cluster_id"] = pd.to_numeric(out["cluster_id"], errors="coerce")
+            return out
+
+        for c in ["phy_clusterID", "unit_id", "id", "cluster", "clusterId"]:
+            if c not in out.columns:
+                continue
+            vals = pd.to_numeric(out[c], errors="coerce")
+            if vals.notna().any():
+                out["cluster_id"] = vals
+                return out
+
+        # Fallback used by some NWB exports where unit rows are ordered by cluster id.
+        out["cluster_id"] = np.arange(len(out), dtype=int)
+        return out
+
     merged_dic: dict[str, pd.DataFrame] = {}
     for probe, u0 in df_units_dic.items():
         u = u0.copy().reset_index(drop=True)
-        if "cluster_id" in u.columns:
-            u["cluster_id"] = pd.to_numeric(u["cluster_id"], errors="coerce")
 
         if qm_dic is None and cluster_dic is None:
             merged_dic[probe] = u
             continue
 
-        m = u.copy()
+        m = _ensure_cluster_id(u)
 
         if qm_dic is not None and probe in qm_dic:
             qm = qm_dic[probe].copy().reset_index(drop=True)
@@ -240,6 +375,74 @@ def build_stim_df(df_trials: pd.DataFrame, event_time_col: str | None = None) ->
     else:
         stim_df["label"] = stim_df["block_label"].astype(str)
     return stim_df
+
+
+def build_pca_event_meta_from_stim_df(stim_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build a fallback pca_event_meta directly from stim_df block labels.
+    This is used when explicit trial-index epoch lists are not provided.
+    """
+    if "event_time_s" not in stim_df.columns:
+        raise ValueError("stim_df must contain event_time_s.")
+    if "trial_index" not in stim_df.columns:
+        raise ValueError("stim_df must contain trial_index.")
+    if "block_label" not in stim_df.columns:
+        raise ValueError("stim_df must contain block_label.")
+
+    out = stim_df.copy().reset_index(drop=True)
+    out["start_time"] = pd.to_numeric(out["event_time_s"], errors="coerce")
+    out = out.dropna(subset=["start_time"]).reset_index(drop=True)
+
+    def _cond_epoch(lbl: Any, is_opto_val: Any) -> tuple[str, int, str]:
+        s = str(lbl).strip().lower()
+        if s.startswith("opto_epoch_"):
+            try:
+                ep = int(s.split("_")[-1])
+            except Exception:
+                ep = 1
+            return "stimulation", ep, f"stimulation_epoch_{ep}"
+        if s.startswith("washout_epoch_"):
+            try:
+                ep = int(s.split("_")[-1])
+            except Exception:
+                ep = 1
+            return "washout", ep, f"washout_epoch_{ep}"
+        if s == "baseline":
+            return "baseline", 0, "baseline_epoch"
+
+        # Fallback if block_label is unexpected
+        is_opto_bool = bool(is_opto_val)
+        if is_opto_bool:
+            return "stimulation", 1, "stimulation_epoch_1"
+        return "baseline", 0, "baseline_epoch"
+
+    conds = []
+    epochs = []
+    cond_epochs = []
+    for _, r in out.iterrows():
+        cond, ep, ce = _cond_epoch(r.get("block_label", ""), r.get("is_opto", False))
+        conds.append(cond)
+        epochs.append(ep)
+        cond_epochs.append(ce)
+
+    pca_event_meta = pd.DataFrame(
+        {
+            "trial_index0": pd.to_numeric(out["trial_index"], errors="coerce").astype("Int64"),
+            "trial_number": pd.to_numeric(out["trial_index"], errors="coerce").astype("Int64") + 1,
+            "start_time": out["start_time"].astype(float),
+            "condition": conds,
+            "epoch_id": epochs,
+            "condition_epoch": cond_epochs,
+        }
+    )
+    pca_event_meta = (
+        pca_event_meta.dropna(subset=["trial_index0", "start_time"])
+        .astype({"trial_index0": int, "trial_number": int, "epoch_id": int})
+        .drop_duplicates(subset=["trial_index0"])
+        .sort_values("trial_index0")
+        .reset_index(drop=True)
+    )
+    return pca_event_meta
 
 
 def pca_select_events(
@@ -307,6 +510,38 @@ def pca_select_events(
         labels = np.array(["all_events"] * len(out), dtype=object)
 
     return out, out[event_time_col].to_numpy(dtype=float), labels
+
+
+def append_custom_event_arrays(
+    events_df: pd.DataFrame,
+    time_col: str,
+    label_col: str,
+    custom_event_arrays: dict[str, Any] | None = None,
+) -> pd.DataFrame:
+    """
+    Append custom numpy/list timestamp arrays as additional event rows.
+    Useful for overlay plotting with arrays like opto trigger start_times.
+    """
+    out = events_df.copy()
+    if custom_event_arrays is None:
+        custom_event_arrays = {}
+
+    rows = []
+    for label, arr in custom_event_arrays.items():
+        if arr is None:
+            continue
+        vals = np.asarray(arr, dtype=float).ravel()
+        vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
+            continue
+        rows.append(pd.DataFrame({label_col: [str(label)] * len(vals), time_col: vals}))
+
+    if len(rows) > 0:
+        out = pd.concat([out] + rows, ignore_index=True, sort=False)
+
+    out[time_col] = pd.to_numeric(out[time_col], errors="coerce")
+    out = out.dropna(subset=[time_col]).sort_values(time_col).reset_index(drop=True)
+    return out
 
 
 def _flatten_idx(x):
@@ -508,7 +743,7 @@ def build_and_save_processed_bundle(
         extras["stimulation_trials_start_times"] = stimulation_trials_start_times
         extras["washout_trials_start_times"] = washout_trials_start_times
     else:
-        pca_event_meta = pd.DataFrame(columns=["trial_index0", "trial_number", "start_time", "condition", "epoch_id", "condition_epoch"])
+        pca_event_meta = build_pca_event_meta_from_stim_df(stim_df)
 
     return save_processed_bundle(
         out_dir=out_dir,
