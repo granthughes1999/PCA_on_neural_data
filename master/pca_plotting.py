@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+import re
 from pathlib import Path
 from typing import Iterable
 
@@ -567,7 +569,7 @@ def plot_epoch_condition_scatter(Xp, event_meta, title_prefix="", subtitle="", p
         fig.text(0.5, 0.94, subtitle, ha="center", va="center", fontsize=11)
     sns.despine()
     plt.tight_layout(rect=[0, 0, 1, 0.9])
-    out = _ensure_dir(Path(save_root) / "PCA_by_Epoch" / "2D_scatter") / f"probe_{_sanitize_name(probe)}_epoch_condition_scatter_2D.png"
+    out = _ensure_dir(Path(save_root) /  "2D_scatter") / f"probe_{_sanitize_name(probe)}_epoch_condition_scatter_2D.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
     if show_plots:
         plt.show()
@@ -605,7 +607,7 @@ def plot_epoch_condition_scatter_3d(Xp, event_meta, title_prefix="", subtitle=""
     if subtitle:
         fig.text(0.5, 0.93, subtitle, ha="center", va="center", fontsize=10)
     plt.tight_layout(rect=[0, 0, 0.85, 0.9])
-    out = _ensure_dir(Path(save_root) / "PCA_by_Epoch" / "3D_scatter") / f"probe_{_sanitize_name(probe)}_epoch_condition_scatter_3D.png"
+    out = _ensure_dir(Path(save_root) / "3D_scatter") / f"probe_{_sanitize_name(probe)}_epoch_condition_scatter_3D.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
     if show_plots:
         plt.show()
@@ -668,7 +670,7 @@ def plot_epoch_condition_line_3d_time(
     if subtitle:
         fig.text(0.5, 0.93, subtitle, ha="center", va="center", fontsize=10)
     plt.tight_layout(rect=[0, 0, 0.85, 0.9])
-    out = _ensure_dir(Path(save_root) / "PCA_by_Epoch" / "3D_PC12_Time") / f"probe_{_sanitize_name(probe)}_epoch_condition_line_PC12_Time.png"
+    out = _ensure_dir(Path(save_root)  / "3D_PC12_Time") / f"probe_{_sanitize_name(probe)}_epoch_condition_line_PC12_Time.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
     if show_plots:
         plt.show()
@@ -722,7 +724,7 @@ def plot_epoch_condition_scatter_epoch_avg(Xp, event_meta, title_prefix="", subt
         fig.text(0.5, 0.94, subtitle, ha="center", va="center", fontsize=11)
     sns.despine()
     plt.tight_layout(rect=[0, 0, 1, 0.9])
-    out = _ensure_dir(Path(save_root) / "PCA_by_Epoch" / "2D_scatter_epoch_avg") / f"probe_{_sanitize_name(probe)}_epoch_avg_scatter_2D.png"
+    out = _ensure_dir(Path(save_root) / "2D_scatter_epoch_avg") / f"probe_{_sanitize_name(probe)}_epoch_avg_scatter_2D.png"
     plt.savefig(out, dpi=300, bbox_inches="tight")
     if show_plots:
         plt.show()
@@ -760,7 +762,7 @@ def plot_epoch_condition_scatter_3d_epoch_avg(Xp, event_meta, title_prefix="", s
     if subtitle:
         fig.text(0.5, 0.93, subtitle, ha="center", va="center", fontsize=10)
     plt.tight_layout(rect=[0, 0, 0.85, 0.9])
-    out = _ensure_dir(Path(save_root) / "PCA_by_Epoch" / "3D_scatter_epoch_avg") / f"probe_{_sanitize_name(probe)}_epoch_avg_scatter_3D.png"
+    out = _ensure_dir(Path(save_root) / "3D_scatter_epoch_avg") / f"probe_{_sanitize_name(probe)}_epoch_avg_scatter_3D.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
     if show_plots:
         plt.show()
@@ -844,7 +846,7 @@ def plot_epoch_condition_line_3d_time_epoch_avg(
     if subtitle:
         fig.text(0.5, 0.93, subtitle, ha="center", va="center", fontsize=10)
     plt.tight_layout(rect=[0, 0, 0.85, 0.9])
-    out = _ensure_dir(Path(save_root) / "PCA_by_Epoch" / "3D_PC12_Time_epoch_avg") / f"probe_{_sanitize_name(probe)}_epoch_avg_line_PC12_Time.png"
+    out = _ensure_dir(Path(save_root) / "3D_PC12_Time_epoch_avg") / f"probe_{_sanitize_name(probe)}_epoch_avg_line_PC12_Time.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
     if show_plots:
         plt.show()
@@ -1387,7 +1389,7 @@ def plot_epoch_condition_scatter(
     sns.despine()
     plt.tight_layout(rect=[0, 0, 1, 0.9])
 
-    save_path = Path(save_root) / 'PCA_by_Epoch' / '2D_scatter'
+    save_path = Path(save_root) / '2D_scatter'
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_{_sanitize_name(brain_region)}_epoch_condition_scatter_2D.png"
     plt.savefig(out, dpi=300, bbox_inches="tight")
@@ -1452,7 +1454,7 @@ def plot_epoch_condition_scatter_3d(
 
     plt.tight_layout(rect=[0, 0, 0.85, 0.9])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "3D_scatter"
+    save_path = Path(save_root)  / "3D_scatter"
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_{_sanitize_name(brain_region)}_epoch_condition_scatter_3D.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
@@ -1553,7 +1555,7 @@ def plot_epoch_condition_line_3d_time(
 
     plt.tight_layout(rect=[0, 0, 0.85, 0.9])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "3D_PC12_Time"
+    save_path = Path(save_root)  / "3D_PC12_Time"
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_epoch_condition_line_PC12_Time.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
@@ -1899,7 +1901,7 @@ def plot_epoch_condition_epochmean_scatter(
     sns.despine()
     plt.tight_layout(rect=[0, 0, 0.86, 0.9])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "EpochMean_2D"
+    save_path = Path(save_root) / "2D_scatter_epoch_avg"
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_epochmean_scatter_2D.png"
     plt.savefig(out, dpi=300, bbox_inches="tight")
@@ -1964,7 +1966,7 @@ def plot_epoch_condition_epochmean_scatter_3d(
 
     plt.tight_layout(rect=[0, 0, 0.85, 0.9])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "EpochMean_3D"
+    save_path = Path(save_root) / "3D_scatter_epoch_avg"
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_epochmean_scatter_3D.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
@@ -2059,7 +2061,7 @@ def plot_epoch_condition_epochmean_line_3d_time(
 
     plt.tight_layout(rect=[0, 0, 0.85, 0.9])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "EpochMean_PC12_Time"
+    save_path = Path(save_root) / "3D_PC12_Time"
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_epochmean_line_PC12_Time.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
@@ -2157,7 +2159,7 @@ def plot_epoch_condition_trial_time_lines_2d(
     sns.despine()
     plt.tight_layout(rect=[0, 0, 0.85, 0.9])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "TrialTimeLines_2D"
+    save_path = Path(save_root) / "TrialTimeLines_2D"
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_trial_time_lines_2D.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
@@ -2245,7 +2247,7 @@ def plot_epoch_condition_trial_time_lines_3d(
 
     plt.tight_layout(rect=[0, 0, 0.85, 0.9])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "TrialTimeLines_3D"
+    save_path = Path(save_root) / "TrialTimeLines_3D"
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_trial_time_lines_3D.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
@@ -2313,7 +2315,7 @@ def plot_epoch_condition_epochmean_scatter_3d_time(
 
     plt.tight_layout(rect=[0, 0, 0.85, 0.9])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "EpochMean_PC12_Time_Points"
+    save_path = Path(save_root) / "3D_PC12_Time_epoch_avg"
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_epochmean_scatter_PC12_Time.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
@@ -2423,7 +2425,7 @@ def plot_epoch_condition_trial_time_lines_pc12_time(
 
     plt.tight_layout(rect=[0, 0, 0.85, 0.9])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "TrialTimeLines_PC12_Time"
+    save_path = Path(save_root) / "3D_PC12_Time"
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_trial_time_lines_PC12_Time.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
@@ -2573,7 +2575,7 @@ def plot_epoch_population_lines_2d(
     sns.despine()
     plt.tight_layout(rect=[0, 0, 0.85, 0.9])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "EpochPopulationLines_2D"
+    save_path = Path(save_root) / "EpochPopulationLines_2D"
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_epoch_population_lines_2D.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
@@ -2655,7 +2657,7 @@ def plot_epoch_population_lines_3d(
 
     plt.tight_layout(rect=[0, 0, 0.85, 0.9])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "EpochPopulationLines_3D"
+    save_path = Path(save_root) / "EpochPopulationLines_3D"
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_epoch_population_lines_3D.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
@@ -2755,7 +2757,7 @@ def plot_epoch_population_lines_pc12_time(
 
     plt.tight_layout(rect=[0, 0, 0.85, 0.9])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "EpochPopulationLines_PC12_Time"
+    save_path = Path(save_root) / "EpochPopulationLines_PC12_Time"
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_epoch_population_lines_PC12_Time.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
@@ -2911,7 +2913,7 @@ def plot_epoch_condition_group_base_trial(
 
     plt.tight_layout(rect=[0, 0, 0.86, 0.9])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "Grouped_BaseTrial"
+    save_path = Path(save_root) / "Grouped_BaseTrial"
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_group_base_trial.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
@@ -3034,7 +3036,7 @@ def plot_epoch_condition_group_epochmean(
 
     plt.tight_layout(rect=[0, 0, 0.86, 0.92])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "Grouped_EpochMean"
+    save_path = Path(save_root) / "Grouped_EpochMean"
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_group_epochmean.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
@@ -3166,7 +3168,7 @@ def plot_epoch_condition_group_trial_time(
 
     plt.tight_layout(rect=[0, 0, 0.86, 0.9])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "Grouped_TrialTime"
+    save_path = Path(save_root) / "Grouped_TrialTime"
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_group_trial_time.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
@@ -3296,7 +3298,7 @@ def plot_epoch_condition_group_epoch_population(
 
     plt.tight_layout(rect=[0, 0, 0.86, 0.9])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "Grouped_EpochPopulation"
+    save_path = Path(save_root) / "Grouped_EpochPopulation"
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_group_epoch_population.png"
     plt.savefig(out, dpi=250, bbox_inches="tight")
@@ -3306,6 +3308,704 @@ def plot_epoch_condition_group_epoch_population(
     else:
         plt.close()
         print(f"PCA plot saved to {out}")
+
+def _legend_unique(ax, *, loc="upper left", bbox_to_anchor=(1.02, 1.0), fontsize=8):
+    handles, labels = ax.get_legend_handles_labels()
+    if len(handles) == 0:
+        return
+    uniq = {}
+    for h, l in zip(handles, labels):
+        if l is None or str(l).strip() == "":
+            continue
+        if l not in uniq:
+            uniq[l] = h
+    if len(uniq) == 0:
+        return
+    ax.legend(
+        uniq.values(),
+        uniq.keys(),
+        loc=loc,
+        bbox_to_anchor=bbox_to_anchor,
+        frameon=False,
+        fontsize=fontsize,
+    )
+
+
+def _plot_group_base_trial_on_axes(ax2d, ax3d, ax3t, Xp, event_meta, *, time_col="start_time", show_legend=True):
+    if Xp.shape[0] < 3:
+        raise ValueError(f"Need at least 3 PCs; got {Xp.shape[0]}.")
+    if time_col not in event_meta.columns:
+        raise ValueError(f"{time_col} not in event_meta columns: {list(event_meta.columns)}")
+
+    em = event_meta.copy().reset_index(drop=True)
+    em[time_col] = pd.to_numeric(em[time_col], errors="coerce")
+    em = em.dropna(subset=[time_col, "condition", "epoch_id"]).reset_index(drop=True)
+    if len(em) != Xp.shape[1]:
+        raise ValueError(f"event_meta rows ({len(em)}) must match Xp events ({Xp.shape[1]}).")
+
+    t0 = em[time_col].min()
+    em["time_rel_s"] = em[time_col] - t0
+    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(em)
+
+    for cond in em["condition"].astype(str).unique():
+        em_cond = em[em["condition"].astype(str) == cond]
+        marker = cond_marker.get(cond, "o")
+        ls = _epoch_condition_linestyle_for(cond_linestyle, cond)
+        for ep in sorted(em_cond["epoch_id"].astype(int).unique()):
+            idx = em_cond.index[em_cond["epoch_id"].astype(int) == ep].to_numpy()
+            label = f"{cond}, epoch {ep}"
+            color = _epoch_condition_color_for(style_ctx, cond, ep)
+
+            ax2d.scatter(
+                Xp[0, idx],
+                Xp[1, idx],
+                s=45,
+                alpha=0.9,
+                marker=marker,
+                color=color,
+                edgecolors="black",
+                linewidths=0.5,
+                label=label,
+            )
+            ax3d.scatter(
+                Xp[0, idx],
+                Xp[1, idx],
+                Xp[2, idx],
+                s=30,
+                alpha=0.85,
+                marker=marker,
+                color=color,
+                edgecolors="black",
+                linewidths=0.4,
+                label=label,
+            )
+            if idx.size >= 2:
+                ord_idx = np.argsort(em.loc[idx, "time_rel_s"].to_numpy(dtype=float))
+                idx2 = idx[ord_idx]
+                ax3t.plot(
+                    Xp[0, idx2],
+                    Xp[1, idx2],
+                    em.loc[idx2, "time_rel_s"].to_numpy(dtype=float),
+                    color=color,
+                    linestyle=ls,
+                    linewidth=2.0,
+                    marker=marker,
+                    markersize=3.5,
+                    markeredgecolor="black",
+                    markeredgewidth=0.5,
+                    label=label,
+                )
+            else:
+                ax3t.scatter(
+                    Xp[0, idx],
+                    Xp[1, idx],
+                    em.loc[idx, "time_rel_s"].to_numpy(dtype=float),
+                    s=30,
+                    alpha=0.85,
+                    marker=marker,
+                    color=color,
+                    edgecolors="black",
+                    linewidths=0.4,
+                    label=label,
+                )
+
+    ax2d.set_xlabel("PC 1")
+    ax2d.set_ylabel("PC 2")
+    ax3d.set_xlabel("PC 1")
+    ax3d.set_ylabel("PC 2")
+    ax3d.set_zlabel("PC 3")
+    ax3t.set_xlabel("PC 1")
+    ax3t.set_ylabel("PC 2")
+    ax3t.set_zlabel("Time (s, rel)")
+    if show_legend:
+        _legend_unique(ax3t, fontsize=7)
+
+
+def _plot_group_epochmean_on_axes(
+    ax2d,
+    ax3d,
+    ax3t_pts,
+    ax3t_line,
+    Xp,
+    event_meta,
+    *,
+    smooth_sigma=1.2,
+    show_legend=True,
+):
+    if Xp.shape[0] < 3:
+        raise ValueError(f"Need at least 3 PCs; got {Xp.shape[0]}.")
+
+    em_mean = _epoch_mean_pc_table(Xp, event_meta)
+    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(event_meta)
+
+    for _, rec in em_mean.iterrows():
+        cond = str(rec["condition"])
+        ep = int(rec["epoch_id"])
+        label = f"{cond}, epoch {ep} (n={int(rec['n_trials'])})"
+        color = _epoch_condition_color_for(style_ctx, cond, ep)
+
+        ax2d.scatter(rec["pc1"], rec["pc2"], s=220, alpha=1.0, marker=cond_marker.get(cond, "o"), color=color, edgecolors="black", linewidths=0.9, label=label)
+        ax3d.scatter(rec["pc1"], rec["pc2"], rec["pc3"], s=110, alpha=1.0, marker=cond_marker.get(cond, "o"), color=color, edgecolors="black", linewidths=0.7, label=label)
+        ax3t_pts.scatter(rec["pc1"], rec["pc2"], rec["time_rel_s"], s=110, alpha=1.0, marker=cond_marker.get(cond, "o"), color=color, edgecolors="black", linewidths=0.7, label=label)
+
+    for cond in em_mean["condition"].astype(str).unique():
+        g = em_mean[em_mean["condition"].astype(str) == cond].sort_values("epoch_id")
+        if g.empty:
+            continue
+        x = g["pc1"].to_numpy(dtype=float)
+        y = g["pc2"].to_numpy(dtype=float)
+        z = g["time_rel_s"].to_numpy(dtype=float)
+        if smooth_sigma and smooth_sigma > 0 and len(x) >= 3:
+            x = gaussian_filter1d(x, sigma=smooth_sigma)
+            y = gaussian_filter1d(y, sigma=smooth_sigma)
+            z = gaussian_filter1d(z, sigma=smooth_sigma)
+
+        trend_color = _epoch_condition_color_for(style_ctx, cond, int(g["epoch_id"].iloc[-1]))
+        ax3t_line.plot(
+            x,
+            y,
+            z,
+            color=trend_color,
+            linestyle=_epoch_condition_linestyle_for(cond_linestyle, cond),
+            linewidth=2.3,
+            alpha=0.85,
+            label=f"{cond} trend",
+        )
+        for ii, (_, rec) in enumerate(g.iterrows()):
+            ep = int(rec["epoch_id"])
+            ax3t_line.scatter(
+                x[ii],
+                y[ii],
+                z[ii],
+                s=90,
+                alpha=1.0,
+                marker=cond_marker.get(cond, "o"),
+                color=_epoch_condition_color_for(style_ctx, cond, ep),
+                edgecolors="black",
+                linewidths=0.6,
+                label=f"{cond}, epoch {ep} (n={int(rec['n_trials'])})",
+            )
+
+    ax2d.set_xlabel("PC 1")
+    ax2d.set_ylabel("PC 2")
+    ax3d.set_xlabel("PC 1")
+    ax3d.set_ylabel("PC 2")
+    ax3d.set_zlabel("PC 3")
+    ax3t_pts.set_xlabel("PC 1")
+    ax3t_pts.set_ylabel("PC 2")
+    ax3t_pts.set_zlabel("Time (s, rel)")
+    ax3t_line.set_xlabel("PC 1")
+    ax3t_line.set_ylabel("PC 2")
+    ax3t_line.set_zlabel("Time (s, rel)")
+    if show_legend:
+        _legend_unique(ax3t_line, fontsize=7)
+
+
+def _plot_group_trial_time_on_axes(
+    ax2d,
+    ax3d,
+    ax3t,
+    trial_time_scores,
+    event_meta,
+    *,
+    bin_time=None,
+    smooth_sigma=1.2,
+    show_legend=True,
+):
+    if trial_time_scores.shape[2] < 3:
+        raise ValueError(f"Need at least 3 PCs; got {trial_time_scores.shape[2]}.")
+    if trial_time_scores.shape[0] != len(event_meta):
+        raise ValueError("Mismatch between trial_time_scores and event_meta rows.")
+
+    n_trials, n_bins, _ = trial_time_scores.shape
+    if bin_time is None:
+        zt = np.arange(n_bins, dtype=float)
+    else:
+        zt = np.asarray(bin_time, dtype=float).ravel()
+        if zt.size != n_bins:
+            raise ValueError(f"bin_time length ({zt.size}) must equal n_bins ({n_bins}).")
+    zt = zt.copy()
+
+    em = event_meta.copy().reset_index(drop=True)
+    style_ctx, _, cond_linestyle = _epoch_condition_color_marker_maps(em)
+    seen = set()
+
+    for i in range(n_trials):
+        cond = str(em.loc[i, "condition"])
+        ep = int(em.loc[i, "epoch_id"])
+        x = trial_time_scores[i, :, 0].astype(float)
+        y = trial_time_scores[i, :, 1].astype(float)
+        z = trial_time_scores[i, :, 2].astype(float)
+
+        if smooth_sigma and smooth_sigma > 0:
+            x = gaussian_filter1d(x, sigma=smooth_sigma)
+            y = gaussian_filter1d(y, sigma=smooth_sigma)
+            z = gaussian_filter1d(z, sigma=smooth_sigma)
+
+        label = f"{cond}, epoch {ep}"
+        label2 = label if label not in seen else None
+        seen.add(label)
+        color = _epoch_condition_color_for(style_ctx, cond, ep)
+        ls = _epoch_condition_linestyle_for(cond_linestyle, cond)
+
+        ax2d.plot(x, y, color=color, linestyle=ls, linewidth=1.5, alpha=0.65, label=label2)
+        _plot_mode3_highlight(ax2d, style_ctx, x, y, zt, condition=cond, epoch_id=ep, linewidth=1.5, alpha=0.65, linestyle=ls)
+        ax3d.plot(x, y, z, color=color, linestyle=ls, linewidth=1.4, alpha=0.65, label=label2)
+        _plot_mode3_highlight(ax3d, style_ctx, x, y, zt, z=z, condition=cond, epoch_id=ep, linewidth=1.4, alpha=0.65, linestyle=ls)
+        ax3t.plot(x, y, zt, color=color, linestyle=ls, linewidth=1.5, alpha=0.65, label=label2)
+        _plot_mode3_highlight(ax3t, style_ctx, x, y, zt, z=zt, condition=cond, epoch_id=ep, linewidth=1.5, alpha=0.65, linestyle=ls)
+
+    ax2d.set_xlabel("PC 1")
+    ax2d.set_ylabel("PC 2")
+    ax3d.set_xlabel("PC 1")
+    ax3d.set_ylabel("PC 2")
+    ax3d.set_zlabel("PC 3")
+    ax3t.set_xlabel("PC 1")
+    ax3t.set_ylabel("PC 2")
+    ax3t.set_zlabel("Time from event (s)")
+    if show_legend:
+        _legend_unique(ax3t, fontsize=7)
+
+
+def _plot_group_epoch_population_on_axes(
+    ax2d,
+    ax3d,
+    ax3t,
+    epoch_info_df,
+    epoch_traj,
+    *,
+    bin_time,
+    smooth_sigma=1.2,
+    show_legend=True,
+):
+    if len(epoch_traj) == 0:
+        raise ValueError("epoch_traj is empty.")
+    if epoch_traj[0].shape[0] < 3:
+        raise ValueError(f"Need at least 3 PCs; got {epoch_traj[0].shape[0]}.")
+
+    bt = np.asarray(bin_time, dtype=float).ravel()
+    n_bins = epoch_traj[0].shape[1]
+    if bt.size != n_bins:
+        raise ValueError(f"bin_time length ({bt.size}) must equal n_bins ({n_bins}).")
+    zt = bt.copy()
+
+    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(epoch_info_df)
+    for i, rec in epoch_info_df.reset_index(drop=True).iterrows():
+        cond = str(rec["condition"])
+        ep = int(rec["epoch_id"])
+        label = f"{cond}, epoch {ep} (n={int(rec['n_trials'])})"
+        x = epoch_traj[i][0].astype(float)
+        y = epoch_traj[i][1].astype(float)
+        z = epoch_traj[i][2].astype(float)
+
+        if smooth_sigma and smooth_sigma > 0 and x.size >= 3:
+            x = gaussian_filter1d(x, sigma=smooth_sigma)
+            y = gaussian_filter1d(y, sigma=smooth_sigma)
+            z = gaussian_filter1d(z, sigma=smooth_sigma)
+
+        color = _epoch_condition_color_for(style_ctx, cond, ep)
+        ls = _epoch_condition_linestyle_for(cond_linestyle, cond)
+        marker = cond_marker.get(cond, "o")
+
+        ax2d.plot(x, y, color=color, linestyle=ls, linewidth=2.1, alpha=0.9, label=label)
+        _plot_mode3_highlight(ax2d, style_ctx, x, y, zt, condition=cond, epoch_id=ep, linewidth=2.1, alpha=0.9, linestyle=ls)
+        ax2d.scatter(x, y, s=10, color=color, marker=marker, alpha=0.30, linewidths=0)
+
+        ax3d.plot(x, y, z, color=color, linestyle=ls, linewidth=2.0, alpha=0.9, label=label)
+        _plot_mode3_highlight(ax3d, style_ctx, x, y, zt, z=z, condition=cond, epoch_id=ep, linewidth=2.0, alpha=0.9, linestyle=ls)
+        ax3d.scatter(x, y, z, s=8, color=color, marker=marker, alpha=0.25, linewidths=0)
+
+        ax3t.plot(x, y, zt, color=color, linestyle=ls, linewidth=2.0, alpha=0.9, label=label)
+        _plot_mode3_highlight(ax3t, style_ctx, x, y, zt, z=zt, condition=cond, epoch_id=ep, linewidth=2.0, alpha=0.9, linestyle=ls)
+        ax3t.scatter(x, y, zt, s=8, color=color, marker=marker, alpha=0.25, linewidths=0)
+
+    ax2d.set_xlabel("PC 1")
+    ax2d.set_ylabel("PC 2")
+    ax3d.set_xlabel("PC 1")
+    ax3d.set_ylabel("PC 2")
+    ax3d.set_zlabel("PC 3")
+    ax3t.set_xlabel("PC 1")
+    ax3t.set_ylabel("PC 2")
+    ax3t.set_zlabel("Time from event (s)")
+    if show_legend:
+        _legend_unique(ax3t, fontsize=7)
+
+
+def _normalize_group_family_name(name: str) -> str:
+    key = str(name).strip().lower()
+    alias = {
+        "base": "base_trial",
+        "base_trial": "base_trial",
+        "plot_epoch_condition_group_base_trial": "base_trial",
+        "epoch_mean": "epochmean",
+        "epochmean": "epochmean",
+        "plot_epoch_condition_group_epochmean": "epochmean",
+        "trial_time": "trial_time",
+        "trialtime": "trial_time",
+        "plot_epoch_condition_group_trial_time": "trial_time",
+        "epoch_population": "epoch_population",
+        "epochpopulation": "epoch_population",
+        "plot_epoch_condition_group_epoch_population": "epoch_population",
+    }
+    out = alias.get(key, key)
+    valid = {"base_trial", "epochmean", "trial_time", "epoch_population"}
+    if out not in valid:
+        raise ValueError(f"Unknown family '{name}'. Valid: {sorted(valid)}")
+    return out
+
+
+def _group_family_meta(family: str) -> tuple[int, list[str], str, str]:
+    fam = _normalize_group_family_name(family)
+    if fam == "epochmean":
+        return (
+            4,
+            [
+                "2D: Epoch mean PC1 vs PC2",
+                "3D: Epoch mean PC1-PC2-PC3",
+                "3D: Epoch mean PC1-PC2-Time points",
+                "3D: Epoch mean PC1-PC2-Time lines",
+            ],
+            "Grouped_ByRegionGrid_EpochMean",
+            "group_epochmean_by_region_grid",
+        )
+    if fam == "base_trial":
+        return (
+            3,
+            ["2D: PC1 vs PC2", "3D: PC1-PC2-PC3", "3D: PC1-PC2-Time"],
+            "Grouped_ByRegionGrid_BaseTrial",
+            "group_base_trial_by_region_grid",
+        )
+    if fam == "trial_time":
+        return (
+            3,
+            [
+                "2D: Per-trial time-bin lines (PC1-PC2)",
+                "3D: Per-trial time-bin lines (PC1-PC2-PC3)",
+                "3D: Per-trial time-bin lines (PC1-PC2-Time)",
+            ],
+            "Grouped_ByRegionGrid_TrialTime",
+            "group_trial_time_by_region_grid",
+        )
+    return (
+        3,
+        [
+            "2D: One line per epoch (PC1-PC2)",
+            "3D: One line per epoch (PC1-PC2-PC3)",
+            "3D: One line per epoch (PC1-PC2-Time)",
+        ],
+        "Grouped_ByRegionGrid_EpochPopulation",
+        "group_epoch_population_by_region_grid",
+    )
+
+
+def plot_epoch_condition_group_family_by_region(
+    probe,
+    merged_dic,
+    event_meta,
+    *,
+    family="base_trial",
+    roi_filter=None,
+    kslabel_filter="both",
+    include_conditions=None,
+    n_components=12,
+    max_tensor_gb=8.0,
+    win_start_s=-1.0,
+    win_end_s=1.0,
+    bin_size_s=0.025,
+    smooth_sigma=1.2,
+    brain_regions: list[str] | None = None,
+    title_prefix="",
+    subtitle="",
+    save_root: str | Path = "master/results",
+    show_plots=False,
+):
+    """
+    Build one large figure for a probe where each row is a brain region and each row contains
+    the grouped PCA subplots for one family.
+    """
+    fam = _normalize_group_family_name(family)
+    n_cols, col_titles, subfolder, file_tag = _group_family_meta(fam)
+
+    if brain_regions is None:
+        regions = _list_probe_brain_regions(
+            merged_dic=merged_dic,
+            probe=probe,
+            roi_filter=roi_filter,
+            kslabel_filter=kslabel_filter,
+        )
+    else:
+        regions = [_normalize_brain_region_value(r) for r in brain_regions]
+
+    if len(regions) == 0:
+        raise ValueError(f"Probe {probe}: no brain regions to plot.")
+
+    n_rows = len(regions)
+    fig_w = 7.8 * n_cols
+    fig_h = max(4.0 * n_rows, 7.5)
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    gs = fig.add_gridspec(n_rows, n_cols, wspace=0.25, hspace=0.42)
+
+    skipped_regions = []
+    for r, br in enumerate(regions):
+        if n_cols == 4:
+            axes = [
+                fig.add_subplot(gs[r, 0]),
+                fig.add_subplot(gs[r, 1], projection="3d"),
+                fig.add_subplot(gs[r, 2], projection="3d"),
+                fig.add_subplot(gs[r, 3], projection="3d"),
+            ]
+        else:
+            axes = [
+                fig.add_subplot(gs[r, 0]),
+                fig.add_subplot(gs[r, 1], projection="3d"),
+                fig.add_subplot(gs[r, 2], projection="3d"),
+            ]
+
+        try:
+            em, trials, tbins, Xp, _ = run_epoch_condition_pca_for_probe(
+                probe=probe,
+                merged_dic=merged_dic,
+                event_meta=event_meta,
+                roi_filter=roi_filter,
+                kslabel_filter=kslabel_filter,
+                include_conditions=include_conditions,
+                n_components=max(3, n_components),
+                max_tensor_gb=max_tensor_gb,
+                win_start_s=win_start_s,
+                win_end_s=win_end_s,
+                bin_size_s=bin_size_s,
+                brain_region_filter=br,
+            )
+            n_units = int(trials.shape[1])
+            n_events = int(len(em))
+
+            if fam == "base_trial":
+                _plot_group_base_trial_on_axes(axes[0], axes[1], axes[2], Xp, em, time_col="start_time", show_legend=True)
+            elif fam == "epochmean":
+                _plot_group_epochmean_on_axes(axes[0], axes[1], axes[2], axes[3], Xp, em, smooth_sigma=smooth_sigma, show_legend=True)
+            elif fam == "trial_time":
+                scores, _ = pca_trial_timebin_scores(trials, n_components=max(3, n_components))
+                _plot_group_trial_time_on_axes(axes[0], axes[1], axes[2], scores, em, bin_time=tbins, smooth_sigma=smooth_sigma, show_legend=True)
+            else:
+                epoch_info, epoch_traj, _ = pca_epoch_population_timebin_trajectories(trials, em, n_components=max(3, n_components))
+                _plot_group_epoch_population_on_axes(axes[0], axes[1], axes[2], epoch_info, epoch_traj, bin_time=tbins, smooth_sigma=smooth_sigma, show_legend=True)
+
+            row_text = f"BR={br}\nunits={n_units}\nevents={n_events}"
+            axes[0].text(
+                -0.38,
+                0.5,
+                row_text,
+                transform=axes[0].transAxes,
+                rotation=90,
+                ha="center",
+                va="center",
+                fontsize=8.5,
+            )
+        except Exception as e:
+            skipped_regions.append((br, str(e)))
+            for ax in axes:
+                ax.set_axis_off()
+                ax.text(
+                    0.5,
+                    0.5,
+                    f"BR={br}\nSkipped\n{e}",
+                    transform=ax.transAxes,
+                    ha="center",
+                    va="center",
+                    fontsize=8.5,
+                    wrap=True,
+                )
+
+        if r == 0:
+            for c, t in enumerate(col_titles):
+                axes[c].set_title(t, fontsize=11)
+
+    base_title = title_prefix if str(title_prefix).strip() else f"Probe {probe}"
+    family_title = {
+        "base_trial": "Base Trial-Level Epoch Plots",
+        "epochmean": "Epoch-Mean Family",
+        "trial_time": "Per-Trial Time-Bin Family",
+        "epoch_population": "One-Line-Per-Epoch Population Family",
+    }[fam]
+    fig.suptitle(f"{base_title} | Brain-Region Grid | {family_title}", fontsize=16, y=0.995)
+
+    subtitle_text = subtitle if str(subtitle).strip() else probe_brain_region_label(
+        merged_dic=merged_dic,
+        probe=probe,
+        roi_filter=roi_filter,
+        kslabel_filter=kslabel_filter,
+    )
+    fig.text(0.5, 0.975, subtitle_text, ha="center", va="center", fontsize=10)
+
+    plt.tight_layout(rect=[0.03, 0.02, 0.98, 0.965])
+
+    save_path = Path(save_root) / subfolder
+    save_path.mkdir(parents=True, exist_ok=True)
+    out = save_path / f"probe_{_sanitize_name(probe)}_{file_tag}.png"
+    plt.savefig(out, dpi=250, bbox_inches="tight")
+
+    if show_plots:
+        plt.show()
+    else:
+        plt.close()
+        print(f"PCA plot saved to {out}")
+
+    return {
+        "out_path": str(out),
+        "family": fam,
+        "probe": str(probe),
+        "regions_requested": int(len(regions)),
+        "regions_skipped": int(len(skipped_regions)),
+        "skipped_regions": skipped_regions,
+    }
+
+
+def plot_epoch_condition_group_all_families_by_region(
+    probe,
+    merged_dic,
+    event_meta,
+    *,
+    families: Iterable[str] | None = None,
+    roi_filter=None,
+    kslabel_filter="both",
+    include_conditions=None,
+    n_components=12,
+    max_tensor_gb=8.0,
+    win_start_s=-1.0,
+    win_end_s=1.0,
+    bin_size_s=0.025,
+    smooth_sigma=1.2,
+    brain_regions: list[str] | None = None,
+    title_prefix="",
+    subtitle="",
+    save_root: str | Path = "master/results",
+    show_plots=False,
+):
+    """
+    Convenience wrapper that builds the 4 large by-region grouped figures for one probe.
+    """
+    fams = ["base_trial", "epochmean", "trial_time", "epoch_population"] if families is None else list(families)
+    out = {}
+    for fam in fams:
+        out[_normalize_group_family_name(fam)] = plot_epoch_condition_group_family_by_region(
+            probe=probe,
+            merged_dic=merged_dic,
+            event_meta=event_meta,
+            family=fam,
+            roi_filter=roi_filter,
+            kslabel_filter=kslabel_filter,
+            include_conditions=include_conditions,
+            n_components=n_components,
+            max_tensor_gb=max_tensor_gb,
+            win_start_s=win_start_s,
+            win_end_s=win_end_s,
+            bin_size_s=bin_size_s,
+            smooth_sigma=smooth_sigma,
+            brain_regions=brain_regions,
+            title_prefix=title_prefix,
+            subtitle=subtitle,
+            save_root=save_root,
+            show_plots=show_plots,
+        )
+    return out
+
+def _group_family_merge_meta(family: str) -> tuple[str, str]:
+    fam = _normalize_group_family_name(family)
+    mapping = {
+        "base_trial": ("Grouped_BaseTrial", "group_base_trial"),
+        "epochmean": ("Grouped_EpochMean", "group_epochmean"),
+        "trial_time": ("Grouped_TrialTime", "group_trial_time"),
+        "epoch_population": ("Grouped_EpochPopulation", "group_epoch_population"),
+    }
+    return mapping[fam]
+
+
+def merge_group_family_pngs_for_probe(
+    save_root: str | Path,
+    probe,
+    *,
+    family="epoch_population",
+    n_cols=3,
+    out_subfolder=None,
+    show_plots=False,
+):
+    """
+    Merge existing per-brain-region grouped PNGs into one grid PNG for a probe/family.
+    Keeps original individual PNGs unchanged.
+    """
+    src_folder_name, suffix = _group_family_merge_meta(family)
+    ptag = _sanitize_name(probe)
+    src_folder = Path(save_root) / src_folder_name
+    pattern = f"probe_{ptag}_region_*_{suffix}.png"
+    paths = sorted(src_folder.glob(pattern))
+    if len(paths) == 0:
+        raise ValueError(f"No files found to merge for probe={probe}, family={family} in {src_folder}")
+
+    n = len(paths)
+    n_cols = max(1, int(n_cols))
+    n_rows = int(math.ceil(n / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(7.2 * n_cols, 5.4 * n_rows))
+    axes_arr = np.array(axes).reshape(-1)
+
+    region_re = re.compile(rf"^probe_{re.escape(ptag)}_region_(.+)_{re.escape(suffix)}$")
+    for ax, p in zip(axes_arr, paths):
+        img = plt.imread(p)
+        ax.imshow(img)
+        ax.axis("off")
+        stem = p.stem
+        m = region_re.match(stem)
+        region_label = m.group(1) if m else p.stem
+        ax.set_title(f"BR={region_label}", fontsize=10)
+
+    for ax in axes_arr[len(paths):]:
+        ax.axis("off")
+
+    fam = _normalize_group_family_name(family)
+    fam_title = {
+        "base_trial": "Grouped Base Trial",
+        "epochmean": "Grouped Epoch Mean",
+        "trial_time": "Grouped Trial Time",
+        "epoch_population": "Grouped Epoch Population",
+    }[fam]
+    fig.suptitle(f"Probe {probe} | {fam_title} | merged brain-region panels", fontsize=14, y=0.995)
+    plt.tight_layout(rect=[0.01, 0.01, 0.99, 0.97])
+
+    out_folder = Path(save_root) / (out_subfolder or f"{src_folder_name}_Merged")
+    out_folder.mkdir(parents=True, exist_ok=True)
+    out_path = out_folder / f"probe_{ptag}_{suffix}_merged.png"
+    plt.savefig(out_path, dpi=220, bbox_inches="tight")
+
+    if show_plots:
+        plt.show()
+    else:
+        plt.close()
+        print(f"Merged PCA grid saved to {out_path}")
+    return str(out_path)
+
+
+def merge_group_family_pngs_for_probe_all(
+    save_root: str | Path,
+    probe,
+    *,
+    families: Iterable[str] | None = None,
+    n_cols=3,
+    show_plots=False,
+):
+    """
+    Merge all 4 grouped family folders into probe-level merged PNGs.
+    """
+    fams = ["base_trial", "epochmean", "trial_time", "epoch_population"] if families is None else list(families)
+    out = {}
+    for fam in fams:
+        key = _normalize_group_family_name(fam)
+        out[key] = merge_group_family_pngs_for_probe(
+            save_root=save_root,
+            probe=probe,
+            family=key,
+            n_cols=n_cols,
+            show_plots=show_plots,
+        )
+    return out
 
 def plot_pca_scree(
     evr,
@@ -3381,7 +4081,7 @@ def plot_pca_scree(
 
     plt.tight_layout(rect=[0, 0, 1, 0.90])
 
-    save_path = Path(save_root) / "PCA_by_Epoch" / "Scree"
+    save_path = Path(save_root) / "Scree"
     save_path.mkdir(parents=True, exist_ok=True)
     run_suffix = _sanitize_name(run_label).strip("_")
     fname = f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_pca_scree"

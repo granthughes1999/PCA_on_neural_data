@@ -915,10 +915,13 @@ def align_pca_event_meta_start_times(
 
     if mode in {"nearest", "index_then_nearest"}:
         need = np.isnan(aligned)
-        nearest_val, nearest_dist = _nearest_event_time_lookup(ref_time[need], src_arr)
-        aligned[need] = nearest_val
-        delta[need] = nearest_dist
-        method[need & np.isfinite(nearest_val)] = "nearest"
+        need_idx = np.flatnonzero(need)
+        if need_idx.size > 0:
+            nearest_val, nearest_dist = _nearest_event_time_lookup(ref_time[need], src_arr)
+            aligned[need] = nearest_val
+            delta[need] = nearest_dist
+            matched_idx = need_idx[np.isfinite(nearest_val)]
+            method[matched_idx] = "nearest"
 
     if mode == "index" and np.isnan(aligned).any():
         n_bad = int(np.isnan(aligned).sum())
