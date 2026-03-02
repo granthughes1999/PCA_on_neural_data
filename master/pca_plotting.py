@@ -51,8 +51,65 @@ def _pca_norm_kslabel(v):
         return "mua"
     return s
 
+_BC_LABEL_ALLOWED = {"NON-SOMA", "NOISE", "MUA", "GOOD"}
 
-def pca_get_probe_units_df(merged_dic, probe, roi_filter=None, kslabel_filter="both"):
+
+def _pca_norm_bc_label(v):
+    if pd.isna(v):
+        return np.nan
+    s = str(v).strip().upper()
+    if s in {"", "NAN", "NONE", "NULL"}:
+        return np.nan
+    s = s.replace("_", "-").replace(" ", "-")
+    if s in {"NONSOMA", "NON-SOMA"}:
+        return "NON-SOMA"
+    if s in {"NOISE", "MUA", "GOOD"}:
+        return s
+    return s
+
+
+def _parse_bc_label_filter(bc_label_filter):
+    if bc_label_filter is None:
+        return None
+
+    if isinstance(bc_label_filter, str):
+        s = bc_label_filter.strip()
+        if s == "" or s.lower() in {"all", "any", "both", "none", "*"}:
+            return None
+        parts = [p for p in re.split(r"[,\|]", s) if str(p).strip() != ""]
+    elif isinstance(bc_label_filter, Iterable):
+        parts = list(bc_label_filter)
+    else:
+        parts = [bc_label_filter]
+
+    keep = []
+    for p in parts:
+        if p is None:
+            continue
+        ps = str(p).strip()
+        if ps == "":
+            continue
+        if ps.lower() in {"all", "any", "both", "none", "*"}:
+            return None
+        n = _pca_norm_bc_label(p)
+        if pd.isna(n):
+            continue
+        keep.append(n)
+
+    if len(keep) == 0:
+        return None
+
+    keep_set = sorted(set(keep))
+    invalid = [v for v in keep_set if v not in _BC_LABEL_ALLOWED]
+    if invalid:
+        raise ValueError(
+            "Invalid bc_label_filter values="
+            f"{invalid}. Allowed values: {sorted(_BC_LABEL_ALLOWED)} or use 'all'."
+        )
+    return keep_set
+
+
+def pca_get_probe_units_df(merged_dic, probe, roi_filter=None, kslabel_filter="both", bc_label_filter=None):
     if probe not in merged_dic:
         raise ValueError(f"Probe {probe} not in merged_dic keys: {list(merged_dic.keys())}")
 
@@ -83,6 +140,13 @@ def pca_get_probe_units_df(merged_dic, probe, roi_filter=None, kslabel_filter="b
             raise ValueError(f"Invalid kslabel_filter={kslabel_filter}. Use 'good', 'mua', or 'both'.")
         ks_norm = df[ks_col].map(_pca_norm_kslabel)
         df = df[ks_norm == target].reset_index(drop=True)
+
+    bc_keep = _parse_bc_label_filter(bc_label_filter)
+    if bc_keep is not None:
+        if "bc_label" not in df.columns:
+            raise ValueError("bc_label filter requested but bc_label column is missing.")
+        bc_norm = df["bc_label"].map(_pca_norm_bc_label)
+        df = df[bc_norm.isin(bc_keep)].reset_index(drop=True)
 
     valid = df["spike_times"].apply(lambda x: isinstance(x, (list, np.ndarray))).to_numpy()
     df = df[valid].reset_index(drop=True)
@@ -486,6 +550,7 @@ def run_epoch_condition_pca_for_probe(
     event_meta,
     roi_filter=None,
     kslabel_filter="both",
+    bc_label_filter=None,
     include_conditions=None,
     n_components=12,
     max_tensor_gb=8.0,
@@ -505,6 +570,7 @@ def run_epoch_condition_pca_for_probe(
         probe=probe,
         roi_filter=roi_filter,
         kslabel_filter=kslabel_filter,
+        bc_label_filter=bc_label_filter,
     )
     if probe_df.empty:
         raise ValueError(f"Probe {probe}: no units after filtering.")
@@ -864,6 +930,7 @@ def run_epoch_condition_pca_for_probe(
     event_meta,
     roi_filter=None,
     kslabel_filter="both",
+    bc_label_filter=None,
     include_conditions=None,
     n_components=12,
     max_tensor_gb=8.0,
@@ -885,6 +952,7 @@ def run_epoch_condition_pca_for_probe(
         probe=probe,
         roi_filter=roi_filter,
         kslabel_filter=kslabel_filter,
+        bc_label_filter=bc_label_filter,
         brain_region_filter=brain_region_filter,
     )
     if probe_df.empty:
@@ -916,7 +984,7 @@ def _pca_norm_brain_region(v):
         return "unknown"
     return s
 
-def pca_get_probe_units_df(merged_dic, probe, roi_filter=None, kslabel_filter="both", brain_region_filter=None):
+def pca_get_probe_units_df(merged_dic, probe, roi_filter=None, kslabel_filter="both", brain_region_filter=None, bc_label_filter=None):
     if probe not in merged_dic:
         raise ValueError(f"Probe {probe} not in merged_dic keys: {list(merged_dic.keys())}")
 
@@ -949,6 +1017,13 @@ def pca_get_probe_units_df(merged_dic, probe, roi_filter=None, kslabel_filter="b
 
         ks_norm = df[ks_col].map(_pca_norm_kslabel)
         df = df[ks_norm == target].reset_index(drop=True)
+
+    bc_keep = _parse_bc_label_filter(bc_label_filter)
+    if bc_keep is not None:
+        if "bc_label" not in df.columns:
+            raise ValueError("bc_label filter requested but bc_label column is missing.")
+        bc_norm = df["bc_label"].map(_pca_norm_bc_label)
+        df = df[bc_norm.isin(bc_keep)].reset_index(drop=True)
 
     if "brain_region" in df.columns:
         df = df.assign(brain_region=df["brain_region"].map(_pca_norm_brain_region))
@@ -1297,12 +1372,13 @@ def _normalize_brain_region_value(v):
         return "unknown"
     return s
 
-def _list_probe_brain_regions(merged_dic, probe, roi_filter=None, kslabel_filter="both"):
+def _list_probe_brain_regions(merged_dic, probe, roi_filter=None, kslabel_filter="both", bc_label_filter=None):
     probe_df = pca_get_probe_units_df(
         merged_dic=merged_dic,
         probe=probe,
         roi_filter=roi_filter,
         kslabel_filter=kslabel_filter,
+        bc_label_filter=bc_label_filter,
     )
     if probe_df.empty:
         return []
@@ -1313,12 +1389,13 @@ def _list_probe_brain_regions(merged_dic, probe, roi_filter=None, kslabel_filter
     vals = probe_df["brain_region"].map(_normalize_brain_region_value)
     return sorted(vals.unique().tolist())
 
-def probe_brain_region_label(merged_dic, probe, roi_filter=None, kslabel_filter="both", max_regions=6, brain_region_filter=None):
+def probe_brain_region_label(merged_dic, probe, roi_filter=None, kslabel_filter="both", max_regions=6, brain_region_filter=None, bc_label_filter=None):
     probe_df = pca_get_probe_units_df(
         merged_dic=merged_dic,
         probe=probe,
         roi_filter=roi_filter,
         kslabel_filter=kslabel_filter,
+        bc_label_filter=bc_label_filter,
     )
     if probe_df.empty or ("brain_region" not in probe_df.columns):
         return "brain_region: n/a"
@@ -3706,6 +3783,7 @@ def plot_epoch_condition_group_family_by_region(
     family="base_trial",
     roi_filter=None,
     kslabel_filter="both",
+    bc_label_filter=None,
     include_conditions=None,
     n_components=12,
     max_tensor_gb=8.0,
@@ -3732,6 +3810,7 @@ def plot_epoch_condition_group_family_by_region(
             probe=probe,
             roi_filter=roi_filter,
             kslabel_filter=kslabel_filter,
+            bc_label_filter=bc_label_filter,
         )
     else:
         regions = [_normalize_brain_region_value(r) for r in brain_regions]
@@ -3768,6 +3847,7 @@ def plot_epoch_condition_group_family_by_region(
                 event_meta=event_meta,
                 roi_filter=roi_filter,
                 kslabel_filter=kslabel_filter,
+                bc_label_filter=bc_label_filter,
                 include_conditions=include_conditions,
                 n_components=max(3, n_components),
                 max_tensor_gb=max_tensor_gb,
@@ -3834,6 +3914,7 @@ def plot_epoch_condition_group_family_by_region(
         probe=probe,
         roi_filter=roi_filter,
         kslabel_filter=kslabel_filter,
+        bc_label_filter=bc_label_filter,
     )
     fig.text(0.5, 0.975, subtitle_text, ha="center", va="center", fontsize=10)
 
@@ -3868,6 +3949,7 @@ def plot_epoch_condition_group_all_families_by_region(
     families: Iterable[str] | None = None,
     roi_filter=None,
     kslabel_filter="both",
+    bc_label_filter=None,
     include_conditions=None,
     n_components=12,
     max_tensor_gb=8.0,
@@ -3894,6 +3976,7 @@ def plot_epoch_condition_group_all_families_by_region(
             family=fam,
             roi_filter=roi_filter,
             kslabel_filter=kslabel_filter,
+            bc_label_filter=bc_label_filter,
             include_conditions=include_conditions,
             n_components=n_components,
             max_tensor_gb=max_tensor_gb,
