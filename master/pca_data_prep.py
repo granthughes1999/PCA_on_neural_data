@@ -955,6 +955,350 @@ def align_pca_event_meta_start_times(
     }
     return em, report
 
+
+def apply_runner_post_alignment(
+    em_aligned: pd.DataFrame,
+    align_to: str,
+    *,
+    count_mode: str = "match_source_count",
+    enforce_source_condition: bool = True,
+    base_event_meta: pd.DataFrame | None = None,
+    stimROI_start_times: np.ndarray | list[float] | None = None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """
+    Apply runner-level alignment patches used by PCA_master_runner notebooks.
+
+    This mirrors the verify_pca_meta_start_times.ipynb logic:
+    1) optional count-mode trimming to index-matched rows,
+    2) source-condition filtering,
+    3) stimulation-sequence remap for stimROI_start_times.
+    """
+    out = em_aligned.copy().reset_index(drop=True)
+    source_name = _normalize_event_time_source_name(align_to)
+
+    cm = str(count_mode).strip().lower()
+    if cm not in {"preserve_aligned_rows", "match_source_count"}:
+        raise ValueError(
+            f"Invalid count_mode={count_mode}. "
+            "Use 'preserve_aligned_rows' or 'match_source_count'."
+        )
+
+    rows_before_count_mode = int(len(out))
+    if cm == "match_source_count" and source_name != "start_time" and "start_time_align_method" in out.columns:
+        out = out[out["start_time_align_method"].astype(str).eq("index")].reset_index(drop=True)
+    rows_after_count_mode = int(len(out))
+
+    source_condition_map = {"stimROI_start_times": "stimulation"}
+    source_condition = source_condition_map.get(source_name, None)
+    rows_before_source_condition = int(len(out))
+    if bool(enforce_source_condition) and (source_condition is not None) and ("condition" in out.columns):
+        out = out[out["condition"].astype(str).str.lower().eq(str(source_condition).lower())].reset_index(drop=True)
+    rows_after_source_condition = int(len(out))
+
+    stim_sequence_source_count = 0
+    stim_sequence_stimulation_rows = 0
+    stim_sequence_rows_mapped = 0
+    if (
+        source_name == "stimROI_start_times"
+        and bool(enforce_source_condition)
+        and base_event_meta is not None
+        and ("condition" in base_event_meta.columns)
+    ):
+        stim_src = np.asarray(stimROI_start_times if stimROI_start_times is not None else [], dtype=float).ravel()
+        stim_rows_all = base_event_meta[
+            base_event_meta["condition"].astype(str).str.lower().eq("stimulation")
+        ].sort_values("trial_index0").reset_index(drop=True)
+        n_map = int(min(len(stim_rows_all), stim_src.size))
+        if n_map > 0:
+            stim_rows = stim_rows_all.iloc[:n_map].copy().reset_index(drop=True)
+            orig_start = pd.to_numeric(stim_rows["start_time"], errors="coerce").to_numpy(dtype=float)
+            new_start = stim_src[:n_map]
+            stim_rows["start_time"] = new_start
+            stim_rows["start_time_source"] = source_name
+            stim_rows["start_time_align_method"] = "stimulation_sequence_index"
+            stim_rows["start_time_align_abs_delta_s"] = np.abs(new_start - orig_start)
+            out = stim_rows
+        stim_sequence_source_count = int(stim_src.size)
+        stim_sequence_stimulation_rows = int(len(stim_rows_all))
+        stim_sequence_rows_mapped = int(n_map)
+
+    patch_report = {
+        "count_mode": cm,
+        "source_condition_filter": source_condition if bool(enforce_source_condition) else None,
+        "output_rows_before_count_mode": rows_before_count_mode,
+        "output_rows_after_count_mode": rows_after_count_mode,
+        "output_rows_before_source_condition_filter": rows_before_source_condition,
+        "output_rows_after_source_condition_filter": int(len(out)),
+        "output_rows_after_source_condition_only": rows_after_source_condition,
+        "stim_sequence_source_count": stim_sequence_source_count,
+        "stim_sequence_stimulation_rows": stim_sequence_stimulation_rows,
+        "stim_sequence_rows_mapped": stim_sequence_rows_mapped,
+    }
+    return out, patch_report
+
+
+def configure_epoch_pca_runner(
+    *,
+    plots: Any,
+    merged_dic: dict[str, pd.DataFrame],
+    pca_event_meta: pd.DataFrame,
+    tone1_start_times: np.ndarray | list[float] | None,
+    tone2_start_times: np.ndarray | list[float] | None,
+    stimROI_start_times: np.ndarray | list[float] | None,
+    optical_start_times: np.ndarray | list[float] | None,
+    all_stimROI_triggers_start_times: np.ndarray | list[float] | None,
+    EPOCH_PCA_PROBE: str,
+    EPOCH_PCA_BRAIN_REGION: str | None,
+    EPOCH_PCA_ROI_FILTER: str | None,
+    EPOCH_PCA_KSLABEL_FILTER: str,
+    EPOCH_PCA_BC_LABEL_FILTER: str | list[str] | tuple[str, ...] | set[str],
+    EPOCH_PCA_FILTER_TYPE: str,
+    EVENT_TIME_ALIGN_TO: str,
+    EVENT_TIME_ALIGN_MISMATCH: str,
+    EVENT_TIME_ALIGN_COUNT_MODE: str,
+    EVENT_TIME_ALIGN_MAX_DELTA_S: float | None,
+    EVENT_TIME_DROP_UNMATCHED: bool,
+    EVENT_TIME_ENFORCE_SOURCE_CONDITION: bool = True,
+    PLOT_COLOR_MODE: int = 2,
+    STIMULATION_LINESTYLE: str = ":",
+    WASHOUT_LINESTYLE: str = "-",
+    BASELINE_LINESTYLE: str = "-",
+    BASELINE_COLOR: str = "orange",
+    MODE3_BASE_COLOR: str = "gray",
+    MODE3_STIMULATION_COLOR: str = "purple",
+    MODE3_WASHOUT_COLOR: str = "green",
+    MODE3_BASELINE_COLOR: str = "orange",
+    MODE3_HIGHLIGHT_COLOR: str = "green",
+    MODE3_HIGHLIGHT_WINDOW_S: float = 0.5,
+    REGION_PANEL_PC123_ELEV: float = 25.0,
+    REGION_PANEL_PC123_AZIM: float = -60.0,
+    REGION_PANEL_PC12TIME_ELEV: float = 20.0,
+    REGION_PANEL_PC12TIME_AZIM: float = -60.0,
+    PLOTS_SAVE_ROOT: str | Path = "master/results",
+    ALLOWED_BRAIN_REGIONS: list[str] | tuple[str, ...] | None = None,
+    SHOW_PLOTS_SINGLE_DEFAULT: bool = True,
+    SHOW_PLOTS_BATCH_DEFAULT: bool = False,
+    print_checks: bool = True,
+) -> dict[str, Any]:
+    """
+    Apply PCA notebook config logic and return computed runtime variables.
+
+    This keeps notebook cells minimal by centralizing style setup, event-time
+    alignment, filter normalization, summary checks, and save-path setup.
+    """
+    if ALLOWED_BRAIN_REGIONS is None:
+        ALLOWED_BRAIN_REGIONS = ["PG", "SIM", "IP", "VaL", "MoP", "SnR", "RN"]
+    else:
+        ALLOWED_BRAIN_REGIONS = [str(x) for x in ALLOWED_BRAIN_REGIONS]
+
+    plots.set_epoch_plot_style(
+        color_mode=PLOT_COLOR_MODE,
+        stimulation_linestyle=STIMULATION_LINESTYLE,
+        washout_linestyle=WASHOUT_LINESTYLE,
+        baseline_linestyle=BASELINE_LINESTYLE,
+        baseline_color=BASELINE_COLOR,
+        mode3_base_color=MODE3_BASE_COLOR,
+        mode3_stimulation_color=MODE3_STIMULATION_COLOR,
+        mode3_washout_color=MODE3_WASHOUT_COLOR,
+        mode3_baseline_color=MODE3_BASELINE_COLOR,
+        mode3_highlight_color=MODE3_HIGHLIGHT_COLOR,
+        mode3_highlight_window_s=MODE3_HIGHLIGHT_WINDOW_S,
+    )
+
+    _filter_type_norm = str(EPOCH_PCA_FILTER_TYPE).strip().lower()
+    if _filter_type_norm not in {"bombcell", "kilosort"}:
+        raise ValueError(
+            f"Invalid EPOCH_PCA_FILTER_TYPE={EPOCH_PCA_FILTER_TYPE}. Use 'bombcell' or 'kilosort'."
+        )
+
+    if _filter_type_norm == "bombcell":
+        EPOCH_PCA_EFFECTIVE_KSLABEL_FILTER = "both"
+        EPOCH_PCA_EFFECTIVE_BC_LABEL_FILTER = EPOCH_PCA_BC_LABEL_FILTER
+        save_filter_tag = "bc"
+    else:
+        EPOCH_PCA_EFFECTIVE_KSLABEL_FILTER = EPOCH_PCA_KSLABEL_FILTER
+        EPOCH_PCA_EFFECTIVE_BC_LABEL_FILTER = "all"
+        save_filter_tag = "ks"
+
+    if print_checks:
+        print(
+            f"Filter type={EPOCH_PCA_FILTER_TYPE} | effective KS={EPOCH_PCA_EFFECTIVE_KSLABEL_FILTER} "
+            f"| effective BC={EPOCH_PCA_EFFECTIVE_BC_LABEL_FILTER}"
+        )
+
+    _allowed_region_map = {r.lower(): r for r in ALLOWED_BRAIN_REGIONS}
+
+    def _allowed_regions_only(
+        _regions: list[str] | tuple[str, ...] | np.ndarray,
+        _allowed_map: dict[str, str] = _allowed_region_map,
+        _allowed_order: list[str] = ALLOWED_BRAIN_REGIONS,
+    ) -> list[str]:
+        _canon: list[str] = []
+        for _r in _regions:
+            _k = str(_r).strip().lower()
+            if _k in _allowed_map:
+                _v = _allowed_map[_k]
+                if _v not in _canon:
+                    _canon.append(_v)
+        return [r for r in _allowed_order if r in _canon]
+
+    pca_event_meta_aligned, EVENT_TIME_ALIGN_REPORT = align_pca_event_meta_start_times(
+        pca_event_meta=pca_event_meta,
+        align_to=EVENT_TIME_ALIGN_TO,
+        tone1_start_times=tone1_start_times,
+        tone2_start_times=tone2_start_times,
+        stimROI_start_times=stimROI_start_times,
+        optical_start_times=optical_start_times,
+        all_stimROI_triggers_start_times=all_stimROI_triggers_start_times,
+        mismatch=EVENT_TIME_ALIGN_MISMATCH,
+        max_delta_s=EVENT_TIME_ALIGN_MAX_DELTA_S,
+        drop_unmatched=EVENT_TIME_DROP_UNMATCHED,
+    )
+
+    _event_time_source_map = {
+        "start_time": None,
+        "tone1_start_times": tone1_start_times,
+        "tone2_start_times": tone2_start_times,
+        "stimROI_start_times": stimROI_start_times,
+        "optical_start_times": optical_start_times,
+        "all_stimROI_triggers_start_times": all_stimROI_triggers_start_times,
+    }
+    _event_time_source_name = _normalize_event_time_source_name(EVENT_TIME_ALIGN_TO)
+    _event_time_source_vals = _event_time_source_map.get(_event_time_source_name, None)
+    if _event_time_source_vals is None:
+        EVENT_TIME_SOURCE_COUNT = int(len(pca_event_meta))
+    else:
+        EVENT_TIME_SOURCE_COUNT = int(np.asarray(_event_time_source_vals, dtype=float).ravel().size)
+
+    pca_event_meta_aligned, _post_align_report = apply_runner_post_alignment(
+        pca_event_meta_aligned,
+        EVENT_TIME_ALIGN_TO,
+        count_mode=EVENT_TIME_ALIGN_COUNT_MODE,
+        enforce_source_condition=EVENT_TIME_ENFORCE_SOURCE_CONDITION,
+        base_event_meta=pca_event_meta,
+        stimROI_start_times=stimROI_start_times,
+    )
+    _count_mode = _post_align_report["count_mode"]
+    _enforce_source_condition = bool(EVENT_TIME_ENFORCE_SOURCE_CONDITION)
+    _source_condition = _post_align_report["source_condition_filter"]
+
+    EVENT_TIME_ALIGN_REPORT["count_mode"] = _count_mode
+    EVENT_TIME_ALIGN_REPORT["source_count"] = EVENT_TIME_SOURCE_COUNT
+    EVENT_TIME_ALIGN_REPORT["output_rows_before_count_mode"] = _post_align_report["output_rows_before_count_mode"]
+    EVENT_TIME_ALIGN_REPORT["output_rows_after_count_mode"] = _post_align_report["output_rows_after_count_mode"]
+    EVENT_TIME_ALIGN_REPORT["source_condition_filter"] = _post_align_report["source_condition_filter"]
+    EVENT_TIME_ALIGN_REPORT["output_rows_before_source_condition_filter"] = _post_align_report["output_rows_before_source_condition_filter"]
+    EVENT_TIME_ALIGN_REPORT["output_rows_after_source_condition_filter"] = _post_align_report["output_rows_after_source_condition_filter"]
+    EVENT_TIME_ALIGN_REPORT["output_rows_after_source_condition_only"] = _post_align_report["output_rows_after_source_condition_only"]
+    EVENT_TIME_ALIGN_REPORT["stim_sequence_source_count"] = _post_align_report["stim_sequence_source_count"]
+    EVENT_TIME_ALIGN_REPORT["stim_sequence_stimulation_rows"] = _post_align_report["stim_sequence_stimulation_rows"]
+    EVENT_TIME_ALIGN_REPORT["stim_sequence_rows_mapped"] = _post_align_report["stim_sequence_rows_mapped"]
+
+    if print_checks:
+        print("event-time alignment:", EVENT_TIME_ALIGN_REPORT)
+
+    _summary_regions_raw = plots._list_probe_brain_regions(
+        merged_dic=merged_dic,
+        probe=EPOCH_PCA_PROBE,
+        roi_filter=EPOCH_PCA_ROI_FILTER,
+        kslabel_filter="both",
+        bc_label_filter="all",
+    )
+    _summary_regions = _allowed_regions_only(_summary_regions_raw)
+    _summary_selected_br = (
+        EPOCH_PCA_BRAIN_REGION
+        if EPOCH_PCA_BRAIN_REGION is not None
+        else (_summary_regions[0] if len(_summary_regions) > 0 else None)
+    )
+
+    _units_df_cfg = plots.pca_get_probe_units_df(
+        merged_dic=merged_dic,
+        probe=EPOCH_PCA_PROBE,
+        roi_filter=EPOCH_PCA_ROI_FILTER,
+        kslabel_filter=EPOCH_PCA_EFFECTIVE_KSLABEL_FILTER,
+        bc_label_filter=EPOCH_PCA_EFFECTIVE_BC_LABEL_FILTER,
+    )
+    _norm_br = getattr(plots, "_normalize_brain_region_value", lambda x: str(x).strip())
+    _br_counts: dict[str, int] = {}
+    if ("brain_region" in _units_df_cfg.columns) and (len(_units_df_cfg) > 0):
+        for _v in _units_df_cfg["brain_region"].tolist():
+            if _v is None:
+                continue
+            _name = str(_norm_br(_v)).strip()
+            if _name == "" or _name.lower() == "nan":
+                continue
+            _br_counts[_name] = int(_br_counts.get(_name, 0)) + 1
+
+    _br_print_order = list(ALLOWED_BRAIN_REGIONS)
+    for _k in sorted(_br_counts.keys()):
+        if _k not in _br_print_order:
+            _br_print_order.append(_k)
+
+    def _angle_tag(v: float) -> str:
+        return f"{float(v):g}".replace("-", "m").replace(".", "p")
+
+    _align_source_name = _normalize_event_time_source_name(EVENT_TIME_ALIGN_TO)
+    _align_token = str(_align_source_name).strip().lower()
+    if _align_token.endswith("_start_times"):
+        _align_token = _align_token[: -len("_start_times")]
+    _align_token = re.sub(r"[^a-z0-9_]+", "_", _align_token).strip("_")
+    if _align_token == "":
+        _align_token = "start_time"
+    EVENT_TIME_ALIGN_FOLDER = f"aligned_{_align_token}"
+
+    ANGLE_FOLDER_TAG = (
+        f"e{_angle_tag(REGION_PANEL_PC123_ELEV)}_a{_angle_tag(REGION_PANEL_PC123_AZIM)}_"
+        f"e{_angle_tag(REGION_PANEL_PC12TIME_ELEV)}_a{_angle_tag(REGION_PANEL_PC12TIME_AZIM)}"
+    )
+
+    PLOTS_SAVE_PATH = (
+        Path(PLOTS_SAVE_ROOT)
+        / "byEpoch"
+        / f"mode_{PLOT_COLOR_MODE}_{save_filter_tag}"
+        / EVENT_TIME_ALIGN_FOLDER
+        / ANGLE_FOLDER_TAG
+    )
+
+    if print_checks:
+        print("\n========== PCA Plot Summary ==========")
+        print(f"Probe: {EPOCH_PCA_PROBE}")
+        print(f"Filter type: {EPOCH_PCA_FILTER_TYPE}")
+        print(f"Effective KS filter: {EPOCH_PCA_EFFECTIVE_KSLABEL_FILTER}")
+        print(f"Effective BC filter: {EPOCH_PCA_EFFECTIVE_BC_LABEL_FILTER}")
+        print(f"Event aligned to: {EVENT_TIME_ALIGN_TO}")
+        print(f"Alignment count mode: {_count_mode}")
+        print(f"Source condition enforcement: {_enforce_source_condition} | source condition: {_source_condition}")
+        print(f"Event source count: {EVENT_TIME_SOURCE_COUNT}")
+        print(f"Total aligned events: {len(pca_event_meta_aligned)}")
+        print(f"Brain regions ({len(_summary_regions)}): {_summary_regions}")
+        print(f"Selected brain region: {_summary_selected_br}")
+        print("Unit counts by brain region (current filters):")
+        for _br in _br_print_order:
+            print(f"  {_br}: {int(_br_counts.get(_br, 0))}")
+        print(f"Total units after current filters: {len(_units_df_cfg)}")
+        print("======================================\n")
+        print("plots will be saved to:", PLOTS_SAVE_PATH)
+
+    return {
+        "EPOCH_PCA_EFFECTIVE_KSLABEL_FILTER": EPOCH_PCA_EFFECTIVE_KSLABEL_FILTER,
+        "EPOCH_PCA_EFFECTIVE_BC_LABEL_FILTER": EPOCH_PCA_EFFECTIVE_BC_LABEL_FILTER,
+        "save_filter_tag": save_filter_tag,
+        "ALLOWED_BRAIN_REGIONS": ALLOWED_BRAIN_REGIONS,
+        "_allowed_regions_only": _allowed_regions_only,
+        "pca_event_meta_aligned": pca_event_meta_aligned,
+        "EVENT_TIME_ALIGN_REPORT": EVENT_TIME_ALIGN_REPORT,
+        "EVENT_TIME_SOURCE_COUNT": EVENT_TIME_SOURCE_COUNT,
+        "_count_mode": _count_mode,
+        "_summary_regions": _summary_regions,
+        "_summary_selected_br": _summary_selected_br,
+        "EVENT_TIME_ALIGN_FOLDER": EVENT_TIME_ALIGN_FOLDER,
+        "ANGLE_FOLDER_TAG": ANGLE_FOLDER_TAG,
+        "PLOTS_SAVE_PATH": PLOTS_SAVE_PATH,
+        "SHOW_PLOTS_SINGLE": bool(SHOW_PLOTS_SINGLE_DEFAULT),
+        "SHOW_PLOTS_BATCH": bool(SHOW_PLOTS_BATCH_DEFAULT),
+    }
+
+
 def merge_units_with_metrics(
     df_units_dic: dict[str, pd.DataFrame],
     qm_dic: dict[str, pd.DataFrame] | None = None,

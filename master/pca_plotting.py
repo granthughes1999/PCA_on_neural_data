@@ -3408,17 +3408,39 @@ def _legend_unique(ax, *, loc="upper left", bbox_to_anchor=(1.02, 1.0), fontsize
     )
 
 
+def _pad_scores_to_min_pcs(arr, *, pc_axis=0, min_pcs=3, fill_value=0.0):
+    """
+    Ensure an array has at least `min_pcs` along `pc_axis` by padding constants.
+    Returns (padded_array, original_pc_count).
+    """
+    a = np.asarray(arr, dtype=float)
+    if a.ndim == 0:
+        raise ValueError("Input array must have at least 1 dimension.")
+    n_pc = int(a.shape[pc_axis])
+    if n_pc >= int(min_pcs):
+        return a, n_pc
+    pad_shape = list(a.shape)
+    pad_shape[pc_axis] = int(min_pcs) - n_pc
+    pad = np.full(pad_shape, float(fill_value), dtype=float)
+    return np.concatenate([a, pad], axis=pc_axis), n_pc
+
+
+def _pc_axis_label(pc_idx_1based: int, *, n_pc_available: int) -> str:
+    if pc_idx_1based <= int(n_pc_available):
+        return f"PC {pc_idx_1based}"
+    return f"PC {pc_idx_1based} (padded)"
+
+
 def _plot_group_base_trial_on_axes(ax2d, ax3d, ax3t, Xp, event_meta, *, time_col="start_time", show_legend=True):
-    if Xp.shape[0] < 3:
-        raise ValueError(f"Need at least 3 PCs; got {Xp.shape[0]}.")
+    Xp_use, n_pc_available = _pad_scores_to_min_pcs(Xp, pc_axis=0, min_pcs=3, fill_value=0.0)
     if time_col not in event_meta.columns:
         raise ValueError(f"{time_col} not in event_meta columns: {list(event_meta.columns)}")
 
     em = event_meta.copy().reset_index(drop=True)
     em[time_col] = pd.to_numeric(em[time_col], errors="coerce")
     em = em.dropna(subset=[time_col, "condition", "epoch_id"]).reset_index(drop=True)
-    if len(em) != Xp.shape[1]:
-        raise ValueError(f"event_meta rows ({len(em)}) must match Xp events ({Xp.shape[1]}).")
+    if len(em) != Xp_use.shape[1]:
+        raise ValueError(f"event_meta rows ({len(em)}) must match Xp events ({Xp_use.shape[1]}).")
 
     t0 = em[time_col].min()
     em["time_rel_s"] = em[time_col] - t0
@@ -3434,8 +3456,8 @@ def _plot_group_base_trial_on_axes(ax2d, ax3d, ax3t, Xp, event_meta, *, time_col
             color = _epoch_condition_color_for(style_ctx, cond, ep)
 
             ax2d.scatter(
-                Xp[0, idx],
-                Xp[1, idx],
+                Xp_use[0, idx],
+                Xp_use[1, idx],
                 s=45,
                 alpha=0.9,
                 marker=marker,
@@ -3445,9 +3467,9 @@ def _plot_group_base_trial_on_axes(ax2d, ax3d, ax3t, Xp, event_meta, *, time_col
                 label=label,
             )
             ax3d.scatter(
-                Xp[0, idx],
-                Xp[1, idx],
-                Xp[2, idx],
+                Xp_use[0, idx],
+                Xp_use[1, idx],
+                Xp_use[2, idx],
                 s=30,
                 alpha=0.85,
                 marker=marker,
@@ -3460,8 +3482,8 @@ def _plot_group_base_trial_on_axes(ax2d, ax3d, ax3t, Xp, event_meta, *, time_col
                 ord_idx = np.argsort(em.loc[idx, "time_rel_s"].to_numpy(dtype=float))
                 idx2 = idx[ord_idx]
                 ax3t.plot(
-                    Xp[0, idx2],
-                    Xp[1, idx2],
+                    Xp_use[0, idx2],
+                    Xp_use[1, idx2],
                     em.loc[idx2, "time_rel_s"].to_numpy(dtype=float),
                     color=color,
                     linestyle=ls,
@@ -3474,8 +3496,8 @@ def _plot_group_base_trial_on_axes(ax2d, ax3d, ax3t, Xp, event_meta, *, time_col
                 )
             else:
                 ax3t.scatter(
-                    Xp[0, idx],
-                    Xp[1, idx],
+                    Xp_use[0, idx],
+                    Xp_use[1, idx],
                     em.loc[idx, "time_rel_s"].to_numpy(dtype=float),
                     s=30,
                     alpha=0.85,
@@ -3486,13 +3508,13 @@ def _plot_group_base_trial_on_axes(ax2d, ax3d, ax3t, Xp, event_meta, *, time_col
                     label=label,
                 )
 
-    ax2d.set_xlabel("PC 1")
-    ax2d.set_ylabel("PC 2")
-    ax3d.set_xlabel("PC 1")
-    ax3d.set_ylabel("PC 2")
-    ax3d.set_zlabel("PC 3")
-    ax3t.set_xlabel("PC 1")
-    ax3t.set_ylabel("PC 2")
+    ax2d.set_xlabel(_pc_axis_label(1, n_pc_available=n_pc_available))
+    ax2d.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
+    ax3d.set_xlabel(_pc_axis_label(1, n_pc_available=n_pc_available))
+    ax3d.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
+    ax3d.set_zlabel(_pc_axis_label(3, n_pc_available=n_pc_available))
+    ax3t.set_xlabel(_pc_axis_label(1, n_pc_available=n_pc_available))
+    ax3t.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
     ax3t.set_zlabel("Time (s, rel)")
     if show_legend:
         _legend_unique(ax3t, fontsize=7)
@@ -3509,10 +3531,9 @@ def _plot_group_epochmean_on_axes(
     smooth_sigma=1.2,
     show_legend=True,
 ):
-    if Xp.shape[0] < 3:
-        raise ValueError(f"Need at least 3 PCs; got {Xp.shape[0]}.")
+    Xp_use, n_pc_available = _pad_scores_to_min_pcs(Xp, pc_axis=0, min_pcs=3, fill_value=0.0)
 
-    em_mean = _epoch_mean_pc_table(Xp, event_meta)
+    em_mean = _epoch_mean_pc_table(Xp_use, event_meta)
     style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(event_meta)
 
     for _, rec in em_mean.iterrows():
@@ -3563,16 +3584,16 @@ def _plot_group_epochmean_on_axes(
                 label=f"{cond}, epoch {ep} (n={int(rec['n_trials'])})",
             )
 
-    ax2d.set_xlabel("PC 1")
-    ax2d.set_ylabel("PC 2")
-    ax3d.set_xlabel("PC 1")
-    ax3d.set_ylabel("PC 2")
-    ax3d.set_zlabel("PC 3")
-    ax3t_pts.set_xlabel("PC 1")
-    ax3t_pts.set_ylabel("PC 2")
+    ax2d.set_xlabel(_pc_axis_label(1, n_pc_available=n_pc_available))
+    ax2d.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
+    ax3d.set_xlabel(_pc_axis_label(1, n_pc_available=n_pc_available))
+    ax3d.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
+    ax3d.set_zlabel(_pc_axis_label(3, n_pc_available=n_pc_available))
+    ax3t_pts.set_xlabel(_pc_axis_label(1, n_pc_available=n_pc_available))
+    ax3t_pts.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
     ax3t_pts.set_zlabel("Time (s, rel)")
-    ax3t_line.set_xlabel("PC 1")
-    ax3t_line.set_ylabel("PC 2")
+    ax3t_line.set_xlabel(_pc_axis_label(1, n_pc_available=n_pc_available))
+    ax3t_line.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
     ax3t_line.set_zlabel("Time (s, rel)")
     if show_legend:
         _legend_unique(ax3t_line, fontsize=7)
@@ -3589,12 +3610,11 @@ def _plot_group_trial_time_on_axes(
     smooth_sigma=1.2,
     show_legend=True,
 ):
-    if trial_time_scores.shape[2] < 3:
-        raise ValueError(f"Need at least 3 PCs; got {trial_time_scores.shape[2]}.")
-    if trial_time_scores.shape[0] != len(event_meta):
+    scores_use, n_pc_available = _pad_scores_to_min_pcs(trial_time_scores, pc_axis=2, min_pcs=3, fill_value=0.0)
+    if scores_use.shape[0] != len(event_meta):
         raise ValueError("Mismatch between trial_time_scores and event_meta rows.")
 
-    n_trials, n_bins, _ = trial_time_scores.shape
+    n_trials, n_bins, _ = scores_use.shape
     if bin_time is None:
         zt = np.arange(n_bins, dtype=float)
     else:
@@ -3610,9 +3630,9 @@ def _plot_group_trial_time_on_axes(
     for i in range(n_trials):
         cond = str(em.loc[i, "condition"])
         ep = int(em.loc[i, "epoch_id"])
-        x = trial_time_scores[i, :, 0].astype(float)
-        y = trial_time_scores[i, :, 1].astype(float)
-        z = trial_time_scores[i, :, 2].astype(float)
+        x = scores_use[i, :, 0].astype(float)
+        y = scores_use[i, :, 1].astype(float)
+        z = scores_use[i, :, 2].astype(float)
 
         if smooth_sigma and smooth_sigma > 0:
             x = gaussian_filter1d(x, sigma=smooth_sigma)
@@ -3632,13 +3652,13 @@ def _plot_group_trial_time_on_axes(
         ax3t.plot(x, y, zt, color=color, linestyle=ls, linewidth=1.5, alpha=0.65, label=label2)
         _plot_mode3_highlight(ax3t, style_ctx, x, y, zt, z=zt, condition=cond, epoch_id=ep, linewidth=1.5, alpha=0.65, linestyle=ls)
 
-    ax2d.set_xlabel("PC 1")
-    ax2d.set_ylabel("PC 2")
-    ax3d.set_xlabel("PC 1")
-    ax3d.set_ylabel("PC 2")
-    ax3d.set_zlabel("PC 3")
-    ax3t.set_xlabel("PC 1")
-    ax3t.set_ylabel("PC 2")
+    ax2d.set_xlabel(_pc_axis_label(1, n_pc_available=n_pc_available))
+    ax2d.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
+    ax3d.set_xlabel(_pc_axis_label(1, n_pc_available=n_pc_available))
+    ax3d.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
+    ax3d.set_zlabel(_pc_axis_label(3, n_pc_available=n_pc_available))
+    ax3t.set_xlabel(_pc_axis_label(1, n_pc_available=n_pc_available))
+    ax3t.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
     ax3t.set_zlabel("Time from event (s)")
     if show_legend:
         _legend_unique(ax3t, fontsize=7)
@@ -3657,11 +3677,11 @@ def _plot_group_epoch_population_on_axes(
 ):
     if len(epoch_traj) == 0:
         raise ValueError("epoch_traj is empty.")
-    if epoch_traj[0].shape[0] < 3:
-        raise ValueError(f"Need at least 3 PCs; got {epoch_traj[0].shape[0]}.")
+    n_pc_available = min(int(np.asarray(tr).shape[0]) for tr in epoch_traj)
+    epoch_traj_use = [_pad_scores_to_min_pcs(tr, pc_axis=0, min_pcs=3, fill_value=0.0)[0] for tr in epoch_traj]
 
     bt = np.asarray(bin_time, dtype=float).ravel()
-    n_bins = epoch_traj[0].shape[1]
+    n_bins = epoch_traj_use[0].shape[1]
     if bt.size != n_bins:
         raise ValueError(f"bin_time length ({bt.size}) must equal n_bins ({n_bins}).")
     zt = bt.copy()
@@ -3671,9 +3691,9 @@ def _plot_group_epoch_population_on_axes(
         cond = str(rec["condition"])
         ep = int(rec["epoch_id"])
         label = f"{cond}, epoch {ep} (n={int(rec['n_trials'])})"
-        x = epoch_traj[i][0].astype(float)
-        y = epoch_traj[i][1].astype(float)
-        z = epoch_traj[i][2].astype(float)
+        x = epoch_traj_use[i][0].astype(float)
+        y = epoch_traj_use[i][1].astype(float)
+        z = epoch_traj_use[i][2].astype(float)
 
         if smooth_sigma and smooth_sigma > 0 and x.size >= 3:
             x = gaussian_filter1d(x, sigma=smooth_sigma)
@@ -3696,13 +3716,13 @@ def _plot_group_epoch_population_on_axes(
         _plot_mode3_highlight(ax3t, style_ctx, x, y, zt, z=zt, condition=cond, epoch_id=ep, linewidth=2.0, alpha=0.9, linestyle=ls)
         ax3t.scatter(x, y, zt, s=8, color=color, marker=marker, alpha=0.25, linewidths=0)
 
-    ax2d.set_xlabel("PC 1")
-    ax2d.set_ylabel("PC 2")
-    ax3d.set_xlabel("PC 1")
-    ax3d.set_ylabel("PC 2")
-    ax3d.set_zlabel("PC 3")
-    ax3t.set_xlabel("PC 1")
-    ax3t.set_ylabel("PC 2")
+    ax2d.set_xlabel(_pc_axis_label(1, n_pc_available=n_pc_available))
+    ax2d.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
+    ax3d.set_xlabel(_pc_axis_label(1, n_pc_available=n_pc_available))
+    ax3d.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
+    ax3d.set_zlabel(_pc_axis_label(3, n_pc_available=n_pc_available))
+    ax3t.set_xlabel(_pc_axis_label(1, n_pc_available=n_pc_available))
+    ax3t.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
     ax3t.set_zlabel("Time from event (s)")
     if show_legend:
         _legend_unique(ax3t, fontsize=7)
@@ -4164,7 +4184,7 @@ def plot_pca_scree(
 
     plt.tight_layout(rect=[0, 0, 1, 0.90])
 
-    save_path = Path(save_root) / "Scree"
+    save_path = Path(save_root)
     save_path.mkdir(parents=True, exist_ok=True)
     run_suffix = _sanitize_name(run_label).strip("_")
     fname = f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_pca_scree"
