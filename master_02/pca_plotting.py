@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from pathlib import Path
@@ -20,7 +21,14 @@ def _sanitize_name(x: str) -> str:
     bad = ['\\', '/', ':', '*', '?', '"', '<', '>', '|']
     for b in bad:
         s = s.replace(b, '_')
-    return s.strip().replace(' ', '_')
+    s = s.strip().replace(' ', '_')
+    if s == "":
+        return "na"
+    # Keep path components short for Windows path safety.
+    if len(s) > 40:
+        h = hashlib.sha1(s.encode("utf-8")).hexdigest()[:10]
+        s = f"{s[:24]}_{h}"
+    return s
 
 
 def _ensure_dir(path: Path) -> Path:
@@ -1134,6 +1142,8 @@ def plot_probe_stimulus_panel(probe,
         print(f"Probe {probe} | brain_region={region_label}: no stimulus groups to plot.")
         return None
 
+    _base_save_root = Path(save_dir) if save_dir is not None else Path(save_root)
+
     if panel_per_probe:
         n = len(per_stim)
         nrows = int(np.ceil(n / ncols))
@@ -1170,7 +1180,7 @@ def plot_probe_stimulus_panel(probe,
         fig.text(0.5, 0.96, f"units: {n_units}", ha="center", va="center", fontsize=10)
         plt.tight_layout(rect=[0, 0, 1, 0.95])
 
-        save_path = Path(save_root) / 'stimulus_panel__byProbe'
+        save_path = _base_save_root / 'sp_bp'
         save_path.mkdir(parents=True, exist_ok=True)
         out = save_path / (
             f"probe_{_sanitize_name(probe)}_{_sanitize_name(region_label)}"
@@ -1210,7 +1220,7 @@ def plot_probe_stimulus_panel(probe,
             sns.despine()
             plt.tight_layout()
             subfolder = rec['stim_name']
-            save_path = Path(save_root) / 'stimulus_panel__byStim' / _sanitize_name(subfolder)
+            save_path = _base_save_root / 'sp_bs' / _sanitize_name(subfolder)
             save_path.mkdir(parents=True, exist_ok=True)
             out = save_path / (
                 f"probe_{_sanitize_name(probe)}_{_sanitize_name(region_label)}"
@@ -1347,8 +1357,16 @@ def plot_probe_selected_stimuli_overlay(probe,
 
     plt.tight_layout(rect=(0.275, 0, 1, 0.9))
 
-    stim_tag = "__".join([_sanitize_name(s) for s in selected_stimuli])
-    save_path = Path(save_root) / 'stimulus_panel_overlay' / stim_tag
+    if save_dir is not None:
+        save_path = Path(save_dir)
+    else:
+        stim_tag_raw = "__".join([_sanitize_name(s) for s in selected_stimuli])
+        # Keep folder names bounded for Windows path safety.
+        if len(stim_tag_raw) > 80:
+            stim_tag = f"set_{hashlib.sha1(stim_tag_raw.encode('utf-8')).hexdigest()[:12]}"
+        else:
+            stim_tag = stim_tag_raw
+        save_path = Path(save_root) / 'ovr' / stim_tag
     save_path.mkdir(parents=True, exist_ok=True)
     out = save_path / (
         f"probe_{_sanitize_name(probe)}_{_sanitize_name(region_label)}"
@@ -4184,7 +4202,7 @@ def plot_pca_scree(
 
     plt.tight_layout(rect=[0, 0, 1, 0.90])
 
-    save_path = Path(save_root)
+    save_path = Path(save_root) / "plot_pca_scree"
     save_path.mkdir(parents=True, exist_ok=True)
     run_suffix = _sanitize_name(run_label).strip("_")
     fname = f"probe_{_sanitize_name(probe)}_region_{_sanitize_name(brain_region)}_pca_scree"

@@ -232,6 +232,7 @@ def plot_task_epoch_structure(
     *,
     trials_are_one_based=True,
     figsize=(14, 3),
+    save_plot_path=None,
 ):
     """
     Plot trial order structure.
@@ -292,7 +293,7 @@ def plot_task_epoch_structure(
     ax.set_yticks([1, 2, 3])
     ax.set_yticklabels(['Baseline', 'Stimulation', 'Washout'])
     ax.set_xlabel('Trial Number')
-    ax.set_title('Task Epoch Order Structure')
+    ax.set_title(f'Task Epoch Order Structure\n Baseline Trials: {len(base)}, Stim Epochs: {len(stim_epochs)}, Wash Epochs: {len(wash_epochs)}')
     ax.legend(loc='upper right')
     ax.grid(alpha=0.3)
 
@@ -306,6 +307,8 @@ def plot_task_epoch_structure(
         ax.set_xlim(min(all_trials) - 2, max(all_trials) + 2)
 
     plt.tight_layout()
+    if save_plot_path is not None:
+        plt.savefig(save_plot_path)
     plt.show()
 
 
@@ -500,6 +503,7 @@ def verify_task_epoch_structure(
     split_mode="keep_incomplete",  # "raise" | "drop_incomplete" | "keep_incomplete"
     show_plot=False,
     verbose=True,
+    save_plot_path=None,
 ):
     """
     Verifies:
@@ -546,7 +550,7 @@ def verify_task_epoch_structure(
 
     if show_plot:
         plot_task_epoch_structure(base_epochs[0] if len(base_epochs) else [],
-                                 stim_epochs, wash_epochs)
+                                 stim_epochs, wash_epochs, save_plot_path=save_plot_path)
 
     errors = []
     warnings = []
