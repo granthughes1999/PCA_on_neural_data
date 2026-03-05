@@ -770,9 +770,6 @@ def _normalize_event_time_source_name(name: str) -> str:
         "stimroi_start_times": "stimROI_start_times",
         "optical": "optical_start_times",
         "optical_start_times": "optical_start_times",
-        "custom": "custom_event_start_times",
-        "custom_event": "custom_event_start_times",
-        "custom_event_start_times": "custom_event_start_times",
     }
     return alias.get(key, str(name).strip())
 
@@ -824,7 +821,6 @@ def align_pca_event_meta_start_times(
     stimROI_start_times: np.ndarray | list[float] | None = None,
     optical_start_times: np.ndarray | list[float] | None = None,
     all_stimROI_triggers_start_times: np.ndarray | list[float] | None = None,
-    custom_event_start_times: np.ndarray | list[float] | None = None,
     mismatch: str = "index_then_nearest",
     max_delta_s: float | None = None,
     drop_unmatched: bool = True,
@@ -866,7 +862,6 @@ def align_pca_event_meta_start_times(
         "stimROI_start_times": stimROI_start_times,
         "optical_start_times": optical_start_times,
         "all_stimROI_triggers_start_times": all_stimROI_triggers_start_times,
-        "custom_event_start_times": custom_event_start_times,
     }
 
     em = pca_event_meta.copy().reset_index(drop=True)
@@ -888,8 +883,7 @@ def align_pca_event_meta_start_times(
     if source_name not in source_map:
         raise ValueError(
             f"Unknown align_to='{align_to}'. "
-            "Expected start_time, tone1, tone2, stimROI, optical, custom_event_start_times, "
-            "or all_stimROI_triggers_start_times."
+            "Expected start_time, tone1, tone2, stimROI, optical, or all_stimROI_triggers_start_times."
         )
 
     src = source_map[source_name]
@@ -962,100 +956,6 @@ def align_pca_event_meta_start_times(
     return em, report
 
 
-def map_source_events_to_pca_trials(
-    pca_event_meta: pd.DataFrame,
-    *,
-    source_times: np.ndarray | list[float],
-    source_name: str,
-    drop_before_first_trial: bool = False,
-    sort_source_times: bool = False,
-) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """
-    Expand trial-level metadata to one row per source event time.
-
-    Mapping rule:
-      source_time maps to the nearest trial start_time in pca_event_meta.
-      This is robust to event streams that occur slightly before or after
-      the trial trigger used to build trial start_time.
-    """
-    if "start_time" not in pca_event_meta.columns:
-        raise ValueError("pca_event_meta must contain start_time.")
-
-    em_base = pca_event_meta.copy().reset_index(drop=True)
-    em_base["start_time"] = pd.to_numeric(em_base["start_time"], errors="coerce")
-    em_base = em_base.dropna(subset=["start_time"]).reset_index(drop=True)
-    if len(em_base) == 0:
-        raise ValueError("pca_event_meta has no valid start_time values.")
-
-    if "trial_index0" in em_base.columns:
-        em_base = em_base.sort_values("trial_index0").reset_index(drop=True)
-    else:
-        em_base = em_base.sort_values("start_time").reset_index(drop=True)
-
-    src_arr = np.asarray(source_times, dtype=float).ravel()
-    n_source_input = int(src_arr.size)
-    if n_source_input == 0:
-        raise ValueError(f"Source array '{source_name}' is empty.")
-
-    finite_mask = np.isfinite(src_arr)
-    src_finite = src_arr[finite_mask]
-    src_idx = np.flatnonzero(finite_mask)
-    n_non_finite = int(n_source_input - src_finite.size)
-    if src_finite.size == 0:
-        raise ValueError(f"Source array '{source_name}' has no finite values.")
-
-    if bool(sort_source_times):
-        order = np.argsort(src_finite, kind="mergesort")
-        src_finite = src_finite[order]
-        src_idx = src_idx[order]
-
-    trial_starts = pd.to_numeric(em_base["start_time"], errors="coerce").to_numpy(dtype=float)
-    right = np.searchsorted(trial_starts, src_finite, side="left")
-    left = np.clip(right - 1, 0, len(trial_starts) - 1)
-    right_clipped = np.clip(right, 0, len(trial_starts) - 1)
-
-    left_val = trial_starts[left]
-    right_val = trial_starts[right_clipped]
-    choose_right = np.abs(src_finite - right_val) <= np.abs(src_finite - left_val)
-    trial_lookup_idx = np.where(choose_right, right_clipped, left)
-
-    before_first = src_finite < trial_starts[0]
-    n_before_first = int(before_first.sum())
-
-    if bool(drop_before_first_trial):
-        keep_mask = ~before_first
-        src_used = src_finite[keep_mask]
-        src_used_idx = src_idx[keep_mask]
-        trial_lookup_idx = trial_lookup_idx[keep_mask]
-    else:
-        trial_lookup_idx = np.clip(trial_lookup_idx, 0, len(em_base) - 1)
-        src_used = src_finite
-        src_used_idx = src_idx
-
-    mapped = em_base.iloc[trial_lookup_idx].copy().reset_index(drop=True)
-    trial_start_time = pd.to_numeric(mapped["start_time"], errors="coerce").to_numpy(dtype=float)
-
-    mapped["trial_start_time"] = trial_start_time
-    mapped["start_time"] = src_used
-    mapped["start_time_source"] = str(source_name)
-    mapped["start_time_align_method"] = "nearest_trial_start"
-    mapped["start_time_align_abs_delta_s"] = np.abs(src_used - trial_start_time)
-    mapped["source_event_index"] = src_used_idx.astype(int)
-
-    report = {
-        "source": str(source_name),
-        "method": "nearest_trial_start",
-        "trial_rows_input": int(len(em_base)),
-        "source_count_input": n_source_input,
-        "source_count_finite": int(src_finite.size),
-        "source_count_non_finite": n_non_finite,
-        "dropped_before_first_trial": n_before_first if bool(drop_before_first_trial) else 0,
-        "output_rows": int(len(mapped)),
-        "sorted_source_times": bool(sort_source_times),
-    }
-    return mapped, report
-
-
 def apply_runner_post_alignment(
     em_aligned: pd.DataFrame,
     align_to: str,
@@ -1063,56 +963,28 @@ def apply_runner_post_alignment(
     count_mode: str = "match_source_count",
     enforce_source_condition: bool = True,
     base_event_meta: pd.DataFrame | None = None,
-    tone1_start_times: np.ndarray | list[float] | None = None,
-    tone2_start_times: np.ndarray | list[float] | None = None,
     stimROI_start_times: np.ndarray | list[float] | None = None,
-    optical_start_times: np.ndarray | list[float] | None = None,
-    all_stimROI_triggers_start_times: np.ndarray | list[float] | None = None,
-    custom_event_start_times: np.ndarray | list[float] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
     Apply runner-level alignment patches used by PCA_master_runner notebooks.
 
-    This mirrors the runner notebook logic:
-    1) optional count-mode processing,
+    This mirrors the verify_pca_meta_start_times.ipynb logic:
+    1) optional count-mode trimming to index-matched rows,
     2) source-condition filtering,
-    3) optional stimulation-sequence remap for stimROI_start_times.
+    3) stimulation-sequence remap for stimROI_start_times.
     """
     out = em_aligned.copy().reset_index(drop=True)
     source_name = _normalize_event_time_source_name(align_to)
-    source_map = {
-        "tone1_start_times": tone1_start_times,
-        "tone2_start_times": tone2_start_times,
-        "stimROI_start_times": stimROI_start_times,
-        "optical_start_times": optical_start_times,
-        "all_stimROI_triggers_start_times": all_stimROI_triggers_start_times,
-        "custom_event_start_times": custom_event_start_times,
-    }
 
     cm = str(count_mode).strip().lower()
-    if cm not in {"preserve_aligned_rows", "match_source_count", "use_all_source_events"}:
+    if cm not in {"preserve_aligned_rows", "match_source_count"}:
         raise ValueError(
             f"Invalid count_mode={count_mode}. "
-            "Use 'preserve_aligned_rows', 'match_source_count', or 'use_all_source_events'."
+            "Use 'preserve_aligned_rows' or 'match_source_count'."
         )
 
-    expand_report: dict[str, Any] = {}
     rows_before_count_mode = int(len(out))
-    if cm == "use_all_source_events" and source_name != "start_time":
-        src_vals = source_map.get(source_name, None)
-        if src_vals is None:
-            raise ValueError(
-                f"count_mode='use_all_source_events' requires source array for '{source_name}', but it was not provided."
-            )
-        base_for_expand = base_event_meta if base_event_meta is not None else out
-        out, expand_report = map_source_events_to_pca_trials(
-            pca_event_meta=base_for_expand,
-            source_times=src_vals,
-            source_name=source_name,
-            drop_before_first_trial=False,
-            sort_source_times=False,
-        )
-    elif cm == "match_source_count" and source_name != "start_time" and "start_time_align_method" in out.columns:
+    if cm == "match_source_count" and source_name != "start_time" and "start_time_align_method" in out.columns:
         out = out[out["start_time_align_method"].astype(str).eq("index")].reset_index(drop=True)
     rows_after_count_mode = int(len(out))
 
@@ -1128,7 +1000,6 @@ def apply_runner_post_alignment(
     stim_sequence_rows_mapped = 0
     if (
         source_name == "stimROI_start_times"
-        and cm != "use_all_source_events"
         and bool(enforce_source_condition)
         and base_event_meta is not None
         and ("condition" in base_event_meta.columns)
@@ -1159,8 +1030,6 @@ def apply_runner_post_alignment(
         "output_rows_before_source_condition_filter": rows_before_source_condition,
         "output_rows_after_source_condition_filter": int(len(out)),
         "output_rows_after_source_condition_only": rows_after_source_condition,
-        "expanded_from_source": bool(cm == "use_all_source_events" and source_name != "start_time"),
-        "expand_report": expand_report,
         "stim_sequence_source_count": stim_sequence_source_count,
         "stim_sequence_stimulation_rows": stim_sequence_stimulation_rows,
         "stim_sequence_rows_mapped": stim_sequence_rows_mapped,
@@ -1210,7 +1079,6 @@ def configure_epoch_pca_runner(
     SHOW_PLOTS_SINGLE_DEFAULT: bool = True,
     SHOW_PLOTS_BATCH_DEFAULT: bool = False,
     print_checks: bool = True,
-    custom_event_start_times: np.ndarray | list[float] | None = None,
 ) -> dict[str, Any]:
     """
     Apply PCA notebook config logic and return computed runtime variables.
@@ -1282,7 +1150,6 @@ def configure_epoch_pca_runner(
         stimROI_start_times=stimROI_start_times,
         optical_start_times=optical_start_times,
         all_stimROI_triggers_start_times=all_stimROI_triggers_start_times,
-        custom_event_start_times=custom_event_start_times,
         mismatch=EVENT_TIME_ALIGN_MISMATCH,
         max_delta_s=EVENT_TIME_ALIGN_MAX_DELTA_S,
         drop_unmatched=EVENT_TIME_DROP_UNMATCHED,
@@ -1295,7 +1162,6 @@ def configure_epoch_pca_runner(
         "stimROI_start_times": stimROI_start_times,
         "optical_start_times": optical_start_times,
         "all_stimROI_triggers_start_times": all_stimROI_triggers_start_times,
-        "custom_event_start_times": custom_event_start_times,
     }
     _event_time_source_name = _normalize_event_time_source_name(EVENT_TIME_ALIGN_TO)
     _event_time_source_vals = _event_time_source_map.get(_event_time_source_name, None)
@@ -1310,12 +1176,7 @@ def configure_epoch_pca_runner(
         count_mode=EVENT_TIME_ALIGN_COUNT_MODE,
         enforce_source_condition=EVENT_TIME_ENFORCE_SOURCE_CONDITION,
         base_event_meta=pca_event_meta,
-        tone1_start_times=tone1_start_times,
-        tone2_start_times=tone2_start_times,
         stimROI_start_times=stimROI_start_times,
-        optical_start_times=optical_start_times,
-        all_stimROI_triggers_start_times=all_stimROI_triggers_start_times,
-        custom_event_start_times=custom_event_start_times,
     )
     _count_mode = _post_align_report["count_mode"]
     _enforce_source_condition = bool(EVENT_TIME_ENFORCE_SOURCE_CONDITION)
@@ -1329,8 +1190,6 @@ def configure_epoch_pca_runner(
     EVENT_TIME_ALIGN_REPORT["output_rows_before_source_condition_filter"] = _post_align_report["output_rows_before_source_condition_filter"]
     EVENT_TIME_ALIGN_REPORT["output_rows_after_source_condition_filter"] = _post_align_report["output_rows_after_source_condition_filter"]
     EVENT_TIME_ALIGN_REPORT["output_rows_after_source_condition_only"] = _post_align_report["output_rows_after_source_condition_only"]
-    EVENT_TIME_ALIGN_REPORT["expanded_from_source"] = _post_align_report["expanded_from_source"]
-    EVENT_TIME_ALIGN_REPORT["expand_report"] = _post_align_report["expand_report"]
     EVENT_TIME_ALIGN_REPORT["stim_sequence_source_count"] = _post_align_report["stim_sequence_source_count"]
     EVENT_TIME_ALIGN_REPORT["stim_sequence_stimulation_rows"] = _post_align_report["stim_sequence_stimulation_rows"]
     EVENT_TIME_ALIGN_REPORT["stim_sequence_rows_mapped"] = _post_align_report["stim_sequence_rows_mapped"]
