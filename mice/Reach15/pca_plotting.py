@@ -156,9 +156,9 @@ def pca_get_probe_units_df(merged_dic, probe, roi_filter=None, brain_region=None
 
     bc_keep = _parse_bc_label_filter(bc_label_filter)
     if bc_keep is not None:
-        if "bc_label" not in df.columns:
-            raise ValueError("bc_label filter requested but bc_label column is missing.")
-        bc_norm = df["bc_label"].map(_pca_norm_bc_label)
+        if "bc_unitType" not in df.columns:
+            raise ValueError("bc_unitType filter requested but bc_unitType column is missing.")
+        bc_norm = df["bc_unitType"].map(_pca_norm_bc_label)
         df = df[bc_norm.isin(bc_keep)].reset_index(drop=True)
 
     valid = df["spike_times"].apply(lambda x: isinstance(x, (list, np.ndarray))).to_numpy()
@@ -1093,9 +1093,9 @@ def pca_get_probe_units_df(merged_dic, probe, roi_filter=None, kslabel_filter="b
 
     bc_keep = _parse_bc_label_filter(bc_label_filter)
     if bc_keep is not None:
-        if "bc_label" not in df.columns:
-            raise ValueError("bc_label filter requested but bc_label column is missing.")
-        bc_norm = df["bc_label"].map(_pca_norm_bc_label)
+        if "bc_unitType" not in df.columns:
+            raise ValueError("bc_unitType filter requested but bc_label column is missing.")
+        bc_norm = df["bc_unitType"].map(_pca_norm_bc_label)
         df = df[bc_norm.isin(bc_keep)].reset_index(drop=True)
 
     if "brain_region" in df.columns:
