@@ -1792,13 +1792,195 @@ def _normalize_color_mode(color_mode):
             return 2
         if key in {"3", "mode3", "graygreen", "greensegment"}:
             return 3
+        if key in {"4", "mode4", "realepoch", "realepochs", "realtrialepochs", "realreachinit"}:
+            return 4
+        if key in {"5", "mode5", "catch", "catchtrial", "catchtrials"}:
+            return 5
     try:
         mode = int(color_mode)
-        if mode in {1, 2, 3}:
+        if mode in {1, 2, 3, 4, 5}:
             return mode
     except Exception:
         pass
     return 1
+
+
+def _parse_condition_epoch_label(label):
+    if pd.isna(label):
+        return np.nan, np.nan
+    s = str(label).strip().lower()
+    if s == "":
+        return np.nan, np.nan
+    if s.startswith("baseline"):
+        return "baseline", 0
+    m = re.match(r"([a-z]+)_epoch(?:_(\d+))?$", s)
+    if m:
+        cond = _normalize_condition_name(m.group(1))
+        epoch_id = int(m.group(2)) if m.group(2) is not None else 0
+        return cond, epoch_id
+    return _normalize_condition_name(s), np.nan
+
+
+def _epoch_condition_plot_meta(event_meta):
+    em = event_meta.copy().reset_index(drop=True)
+    mode = _normalize_color_mode(_EPOCH_PLOT_STYLE_DEFAULTS.get("color_mode", 1))
+    use_real = (
+        mode in {4, 5}
+        and {"real_condition", "real_epoch_id"}.issubset(em.columns)
+        and em["real_condition"].notna().any()
+    )
+
+    fallback_cond = em["condition"] if "condition" in em.columns else pd.Series(index=em.index, dtype=object)
+    fallback_epoch = (
+        pd.to_numeric(em["epoch_id"], errors="coerce")
+        if "epoch_id" in em.columns
+        else pd.Series(index=em.index, dtype=float)
+    )
+
+    if "condition_epoch" in em.columns:
+        parsed = em["condition_epoch"].map(_parse_condition_epoch_label)
+        ideal_cond = parsed.map(lambda x: x[0] if isinstance(x, tuple) else np.nan)
+        ideal_epoch = pd.to_numeric(
+            parsed.map(lambda x: x[1] if isinstance(x, tuple) else np.nan),
+            errors="coerce",
+        )
+    else:
+        ideal_cond = pd.Series(index=em.index, dtype=object)
+        ideal_epoch = pd.Series(index=em.index, dtype=float)
+
+    em["ideal_condition_plot"] = ideal_cond.where(ideal_cond.notna(), fallback_cond)
+    em["ideal_epoch_id_plot"] = ideal_epoch.where(ideal_epoch.notna(), fallback_epoch)
+    em["is_catch_trial_plot"] = False
+    em["context_condition_plot"] = em["ideal_condition_plot"].map(_normalize_condition_name)
+
+    if use_real:
+        real_cond = em["real_condition"]
+        real_epoch = pd.to_numeric(em["real_epoch_id"], errors="coerce")
+        actual_cond = real_cond.where(real_cond.notna(), fallback_cond).map(_normalize_condition_name)
+        plot_cond = actual_cond.copy()
+        plot_epoch = em["ideal_epoch_id_plot"].where(em["ideal_epoch_id_plot"].notna(), real_epoch.where(real_epoch.notna(), fallback_epoch))
+
+        if mode == 5:
+            ideal_norm = em["ideal_condition_plot"].map(_normalize_condition_name)
+            mismatch = (
+                actual_cond.notna()
+                & ideal_norm.notna()
+                & (actual_cond != ideal_norm)
+            )
+            em["is_catch_trial_plot"] = mismatch
+            plot_cond = actual_cond.where(~mismatch, "catch")
+
+        em["actual_condition_plot"] = actual_cond
+        em["condition_plot"] = plot_cond.map(_normalize_condition_name)
+        em["epoch_id_plot"] = plot_epoch
+    else:
+        if "condition" not in em.columns or "epoch_id" not in em.columns:
+            raise ValueError("event_meta must contain condition and epoch_id columns.")
+        em["actual_condition_plot"] = fallback_cond.map(_normalize_condition_name)
+        em["condition_plot"] = fallback_cond.map(_normalize_condition_name)
+        em["epoch_id_plot"] = fallback_epoch
+
+    em["_plot_color_mode"] = mode
+    sig_cols = ["condition_plot", "epoch_id_plot"]
+    if mode == 5:
+        sig_cols.append("context_condition_plot")
+    sig = (
+        em[sig_cols]
+        .copy()
+        .assign(epoch_id_plot=pd.to_numeric(em["epoch_id_plot"], errors="coerce").fillna(-1).astype(int))
+        .astype(str)
+        .agg("|".join, axis=1)
+    )
+    seg_change = sig.ne(sig.shift(1)).fillna(True)
+    em["plot_segment_id"] = (seg_change.cumsum().astype(int) - 1).astype(int)
+
+    return em
+
+
+def _catch_trial_descriptor(actual_condition, parent_condition=None):
+    actual = _normalize_condition_name(actual_condition)
+    parent = _normalize_condition_name(parent_condition) if parent_condition is not None and not pd.isna(parent_condition) else None
+    if parent == "stimulation" and actual == "washout":
+        return "no-stim"
+    if parent == "washout" and actual == "stimulation":
+        return "stim"
+    return actual
+
+
+def _epoch_condition_plot_label(condition, epoch_id, *, n_trials=None, parent_condition=None, actual_condition=None):
+    cond = _normalize_condition_name(condition)
+    if cond == "catch":
+        parent = _normalize_condition_name(parent_condition) if parent_condition is not None and not pd.isna(parent_condition) else "unknown"
+        desc = _catch_trial_descriptor(actual_condition, parent)
+        label = f"CATCH ({desc}) - {parent}, epoch {int(epoch_id)}"
+    else:
+        label = f"{cond}, epoch {int(epoch_id)}"
+    if n_trials is not None:
+        label = f"{label} (n={int(n_trials)})"
+    return label
+
+
+def _uses_segmented_epoch_groups(event_meta) -> bool:
+    if "plot_segment_id" not in event_meta.columns or "_plot_color_mode" not in event_meta.columns or event_meta.empty:
+        return False
+    mode = int(pd.to_numeric(event_meta["_plot_color_mode"], errors="coerce").iloc[0])
+    return mode in {4, 5}
+
+
+def _segment_label_map(event_meta, *, include_n_trials=True):
+    if "plot_segment_id" not in event_meta.columns:
+        return {}
+    base_labels = []
+    ordered_seg_ids = []
+    for seg_id, g in event_meta.groupby("plot_segment_id", sort=False):
+        row0 = g.iloc[0]
+        base = _epoch_condition_plot_label(
+            row0["condition_plot"],
+            row0["epoch_id_plot"],
+            n_trials=(len(g) if include_n_trials else None),
+            parent_condition=row0.get("context_condition_plot"),
+            actual_condition=row0.get("actual_condition_plot"),
+        )
+        ordered_seg_ids.append(int(seg_id))
+        base_labels.append(base)
+
+    dup_total = pd.Series(base_labels).value_counts().to_dict() if len(base_labels) else {}
+    dup_seen = {}
+    out = {}
+    for seg_id, base in zip(ordered_seg_ids, base_labels):
+        dup_seen[base] = dup_seen.get(base, 0) + 1
+        if dup_total.get(base, 0) > 1:
+            out[seg_id] = f"{base} [part {dup_seen[base]}]"
+        else:
+            out[seg_id] = base
+    return out
+
+
+def _epoch_condition_group_iter(event_meta):
+    if _uses_segmented_epoch_groups(event_meta):
+        label_map = _segment_label_map(event_meta, include_n_trials=True)
+        for seg_id, g in event_meta.groupby("plot_segment_id", sort=False):
+            yield {
+                "segment_id": int(seg_id),
+                "condition": str(g["condition_plot"].iloc[0]),
+                "epoch_id": int(pd.to_numeric(g["epoch_id_plot"], errors="coerce").iloc[0]),
+                "indices": g.index.to_numpy(dtype=int),
+                "label": label_map.get(int(seg_id)),
+                "n_trials": int(len(g)),
+                "group_df": g,
+            }
+        return
+
+    for (cond, ep), g in event_meta.groupby(["condition_plot", "epoch_id_plot"], dropna=True, sort=False):
+        yield {
+            "segment_id": None,
+            "condition": str(cond),
+            "epoch_id": int(ep),
+            "indices": g.index.to_numpy(dtype=int),
+            "label": _epoch_condition_plot_label(cond, ep),
+            "n_trials": int(len(g)),
+            "group_df": g,
+        }
 
 
 def _interp_color(c0, c1, t):
@@ -1847,13 +2029,15 @@ def _epoch_condition_color_marker_maps(
         cfg["mode3_highlight_window_s"] = mode3_highlight_window_s
 
     mode = _normalize_color_mode(cfg["color_mode"])
-    epochs = sorted(event_meta["epoch_id"].dropna().astype(int).unique().tolist())
+    epoch_col = "epoch_id_plot" if "epoch_id_plot" in event_meta.columns else "epoch_id"
+    epochs = sorted(pd.to_numeric(event_meta[epoch_col], errors="coerce").dropna().astype(int).unique().tolist())
 
     style_ctx = {
         "color_mode": mode,
         "epoch_color": {},
         "stim_epoch_color": {},
         "wash_epoch_color": {},
+        "catch_color": "#2ca25f",
         "baseline_color": cfg["baseline_color"],
         "mode3_base_color": cfg["mode3_base_color"],
         "mode3_stimulation_color": cfg["mode3_stimulation_color"],
@@ -1877,11 +2061,13 @@ def _epoch_condition_color_marker_maps(
         "baseline": "o",
         "stimulation": "^",
         "washout": "s",
+        "catch": "D",
     }
     cond_linestyle = {
         "baseline": cfg["baseline_linestyle"],
         "stimulation": cfg["stimulation_linestyle"],
         "washout": cfg["washout_linestyle"],
+        "catch": "-.",
     }
     return style_ctx, cond_marker, cond_linestyle
 
@@ -1894,12 +2080,15 @@ def _epoch_condition_color_for(style_ctx, condition, epoch_id, default_color="ta
     if mode == 3:
         return style_ctx.get("mode3_base_color", "#808080")
 
+    if cond == "catch":
+        return style_ctx.get("catch_color", "#2ca25f")
+
     if cond == "baseline":
         return style_ctx.get("baseline_color", "orange")
 
     if mode == 1:
         return style_ctx.get("epoch_color", {}).get(ep, default_color)
-    if mode == 2:
+    if mode in {2, 4, 5}:
         if cond == "stimulation":
             return style_ctx.get("stim_epoch_color", {}).get(ep, "#08519c")
         if cond == "washout":
@@ -1970,7 +2159,7 @@ def _plot_mode3_highlight(
     )
 
 def _epoch_mean_pc_table(Xp, event_meta, time_col="start_time"):
-    em = event_meta.copy().reset_index(drop=True)
+    em = _epoch_condition_plot_meta(event_meta)
     if Xp.shape[1] != len(em):
         raise ValueError(f"Xp/events mismatch: Xp has {Xp.shape[1]} events, event_meta has {len(em)} rows.")
 
@@ -1978,15 +2167,20 @@ def _epoch_mean_pc_table(Xp, event_meta, time_col="start_time"):
     rows = []
     n_pc = min(3, Xp.shape[0])
 
-    for (cond, ep), g in em.groupby(["condition", "epoch_id"], dropna=True):
+    for grp in _epoch_condition_group_iter(em):
+        g = grp["group_df"]
         idx = g["_event_idx"].to_numpy(dtype=int)
         if idx.size == 0:
             continue
 
         rec = {
-            "condition": str(cond),
-            "epoch_id": int(ep),
+            "condition": str(grp["condition"]),
+            "epoch_id": int(grp["epoch_id"]),
             "n_trials": int(idx.size),
+            "plot_label": str(grp["label"]),
+            "plot_segment_id": grp["segment_id"],
+            "context_condition": str(g["context_condition_plot"].iloc[0]) if "context_condition_plot" in g.columns else str(grp["condition"]),
+            "actual_condition": str(g["actual_condition_plot"].iloc[0]) if "actual_condition_plot" in g.columns else str(grp["condition"]),
         }
         for pc in range(n_pc):
             rec[f"pc{pc+1}"] = float(np.mean(Xp[pc, idx]))
@@ -2001,7 +2195,10 @@ def _epoch_mean_pc_table(Xp, event_meta, time_col="start_time"):
     if out.empty:
         raise ValueError("No epoch groups available for epoch-mean plotting.")
 
-    out = out.sort_values(["condition", "epoch_id"]).reset_index(drop=True)
+    if "plot_segment_id" in out.columns and out["plot_segment_id"].notna().any():
+        out = out.sort_values("plot_segment_id", na_position="last").reset_index(drop=True)
+    else:
+        out = out.sort_values(["condition", "epoch_id"]).reset_index(drop=True)
     if "time_mean" in out.columns:
         t0 = np.nanmin(out["time_mean"].to_numpy(dtype=float))
         if np.isfinite(t0):
@@ -2266,15 +2463,15 @@ def plot_epoch_condition_trial_time_lines_2d(
     if trial_time_scores.shape[0] != len(event_meta):
         raise ValueError("Mismatch between trial_time_scores trials and event_meta rows.")
 
-    em = event_meta.copy().reset_index(drop=True)
+    em = _epoch_condition_plot_meta(event_meta)
     style_ctx, _, cond_linestyle = _epoch_condition_color_marker_maps(em)
 
     fig, ax = plt.subplots(1, 1, figsize=(13, 10))
     seen = set()
 
     for i in range(len(em)):
-        cond = str(em.loc[i, "condition"])
-        ep = int(em.loc[i, "epoch_id"])
+        cond = str(em.loc[i, "condition_plot"])
+        ep = int(em.loc[i, "epoch_id_plot"])
         x = trial_time_scores[i, :, 0].astype(float)
         y = trial_time_scores[i, :, 1].astype(float)
 
@@ -2282,7 +2479,7 @@ def plot_epoch_condition_trial_time_lines_2d(
             x = gaussian_filter1d(x, sigma=smooth_sigma)
             y = gaussian_filter1d(y, sigma=smooth_sigma)
 
-        label = f"{cond}, epoch {ep}"
+        label = _epoch_condition_plot_label(cond, ep)
         if label in seen:
             label = None
         else:
@@ -2611,11 +2808,11 @@ def pca_epoch_population_timebin_trajectories(trials, event_meta, n_components=6
         raise ValueError(f"Expected trials shape (n_trials, n_units, n_bins), got {trials.shape}")
 
     n_trials, n_units, n_bins = trials.shape
-    em = event_meta.copy().reset_index(drop=True)
+    em = _epoch_condition_plot_meta(event_meta)
     if len(em) != n_trials:
         raise ValueError(f"event_meta rows ({len(em)}) must match n_trials ({n_trials}).")
 
-    for col in ["condition", "epoch_id"]:
+    for col in ["condition_plot", "epoch_id_plot"]:
         if col not in em.columns:
             raise ValueError(f"Required column '{col}' missing from event_meta.")
 
@@ -2623,7 +2820,8 @@ def pca_epoch_population_timebin_trajectories(trials, event_meta, n_components=6
 
     rows = []
     epoch_means = []
-    for (cond, ep), g in em.groupby(["condition", "epoch_id"], dropna=True):
+    for grp in _epoch_condition_group_iter(em):
+        g = grp["group_df"]
         idx = g["_trial_idx"].to_numpy(dtype=int)
         if idx.size == 0:
             continue
@@ -2632,10 +2830,14 @@ def pca_epoch_population_timebin_trajectories(trials, event_meta, n_components=6
         epoch_means.append(mean_pop)
 
         rec = {
-            "condition": str(cond),
-            "epoch_id": int(ep),
+            "condition": str(grp["condition"]),
+            "epoch_id": int(grp["epoch_id"]),
             "n_trials": int(idx.size),
             "first_trial_idx": int(np.min(idx)),
+            "plot_label": str(grp["label"]),
+            "plot_segment_id": grp["segment_id"],
+            "context_condition": str(g["context_condition_plot"].iloc[0]) if "context_condition_plot" in g.columns else str(grp["condition"]),
+            "actual_condition": str(g["actual_condition_plot"].iloc[0]) if "actual_condition_plot" in g.columns else str(grp["condition"]),
         }
         if "start_time" in g.columns:
             st = pd.to_numeric(g["start_time"], errors="coerce").dropna().to_numpy(dtype=float)
@@ -2646,7 +2848,9 @@ def pca_epoch_population_timebin_trajectories(trials, event_meta, n_components=6
         raise ValueError("No epoch groups found to build population trajectories.")
 
     epoch_info_df = pd.DataFrame(rows)
-    if "start_time_mean" in epoch_info_df.columns:
+    if "plot_segment_id" in epoch_info_df.columns and epoch_info_df["plot_segment_id"].notna().any():
+        epoch_info_df = epoch_info_df.sort_values(["first_trial_idx", "plot_segment_id"], na_position="last").reset_index(drop=True)
+    elif "start_time_mean" in epoch_info_df.columns:
         epoch_info_df = epoch_info_df.sort_values(["start_time_mean", "first_trial_idx"], na_position="last").reset_index(drop=True)
     else:
         epoch_info_df = epoch_info_df.sort_values(["condition", "epoch_id", "first_trial_idx"]).reset_index(drop=True)
@@ -2654,10 +2858,10 @@ def pca_epoch_population_timebin_trajectories(trials, event_meta, n_components=6
     # Reorder epoch means to match epoch_info_df
     key_to_mean = {}
     for k, row in enumerate(rows):
-        key_to_mean[(row["condition"], int(row["epoch_id"]), int(row["first_trial_idx"]))] = epoch_means[k]
+        key_to_mean[(row["condition"], int(row["epoch_id"]), int(row["first_trial_idx"]), row.get("plot_segment_id"))] = epoch_means[k]
     ordered_means = []
     for _, row in epoch_info_df.iterrows():
-        ordered_means.append(key_to_mean[(str(row["condition"]), int(row["epoch_id"]), int(row["first_trial_idx"]))])
+        ordered_means.append(key_to_mean[(str(row["condition"]), int(row["epoch_id"]), int(row["first_trial_idx"]), row.get("plot_segment_id"))])
 
     Xa = np.hstack(ordered_means)  # (n_units, n_epochs * n_bins)
     Xaz = zscore_rows(Xa)
@@ -2702,7 +2906,7 @@ def plot_epoch_population_lines_2d(
             x = gaussian_filter1d(x, sigma=smooth_sigma)
             y = gaussian_filter1d(y, sigma=smooth_sigma)
 
-        label = f"{cond}, epoch {ep} (n={int(rec['n_trials'])})"
+        label = _epoch_condition_plot_label(cond, ep, n_trials=int(rec["n_trials"]))
         ax.plot(
             x,
             y,
@@ -2987,9 +3191,9 @@ def plot_epoch_condition_group_base_trial(
     if time_col not in event_meta.columns:
         raise ValueError(f"{time_col} not in event_meta columns: {list(event_meta.columns)}")
 
-    em = event_meta.copy().reset_index(drop=True)
+    em = _epoch_condition_plot_meta(event_meta)
     em[time_col] = pd.to_numeric(em[time_col], errors="coerce")
-    em = em.dropna(subset=[time_col, "condition", "epoch_id"]).reset_index(drop=True)
+    em = em.dropna(subset=[time_col, "condition_plot", "epoch_id_plot"]).reset_index(drop=True)
     if len(em) != Xp.shape[1]:
         raise ValueError(f"event_meta rows ({len(em)}) must match Xp events ({Xp.shape[1]}).")
 
@@ -3004,13 +3208,13 @@ def plot_epoch_condition_group_base_trial(
     ax3d = fig.add_subplot(gs[0, 1], projection="3d")
     ax3t = fig.add_subplot(gs[0, 2], projection="3d")
 
-    for cond in em["condition"].astype(str).unique():
-        em_cond = em[em["condition"].astype(str) == cond]
+    for cond in em["condition_plot"].astype(str).unique():
+        em_cond = em[em["condition_plot"].astype(str) == cond]
         marker = cond_marker.get(cond, "o")
         ls = _epoch_condition_linestyle_for(cond_linestyle, cond)
-        for ep in sorted(em_cond["epoch_id"].astype(int).unique()):
-            idx = em_cond.index[em_cond["epoch_id"].astype(int) == ep].to_numpy()
-            label = f"{cond}, epoch {ep}"
+        for ep in sorted(em_cond["epoch_id_plot"].astype(int).unique()):
+            idx = em_cond.index[em_cond["epoch_id_plot"].astype(int) == ep].to_numpy()
+            label = _epoch_condition_plot_label(cond, ep)
 
             ax2d.scatter(
                 Xp[0, idx], Xp[1, idx],
@@ -3100,7 +3304,7 @@ def plot_epoch_condition_group_epochmean(
         raise ValueError(f"Need at least 3 PCs; got {Xp.shape[0]}.")
 
     em_mean = _epoch_mean_pc_table(Xp, event_meta)
-    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(event_meta)
+    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(_epoch_condition_plot_meta(event_meta))
 
     fig = plt.figure(figsize=(20, 14))
     gs = fig.add_gridspec(2, 2, wspace=0.2, hspace=0.25)
@@ -3112,7 +3316,7 @@ def plot_epoch_condition_group_epochmean(
     for _, rec in em_mean.iterrows():
         cond = str(rec["condition"])
         ep = int(rec["epoch_id"])
-        label = f"{cond}, epoch {ep} (n={int(rec['n_trials'])})"
+        label = _epoch_condition_plot_label(cond, ep, n_trials=int(rec["n_trials"]))
 
         ax2d.scatter(
             rec["pc1"], rec["pc2"],
@@ -3162,7 +3366,7 @@ def plot_epoch_condition_group_epochmean(
                 x[ii], y[ii], z[ii],
                 s=90, alpha=1.0, marker=cond_marker.get(cond, "o"),
                 color=_epoch_condition_color_for(style_ctx, cond, ep), edgecolors="black", linewidths=0.6,
-                label=f"{cond}, epoch {ep} (n={int(rec['n_trials'])})",
+                label=_epoch_condition_plot_label(cond, ep, n_trials=int(rec["n_trials"])),
             )
 
     ax2d.set_title("2D: Epoch mean PC1 vs PC2")
@@ -3519,9 +3723,9 @@ def _plot_group_base_trial_on_axes(ax2d, ax3d, ax3t, Xp, event_meta, *, time_col
     if time_col not in event_meta.columns:
         raise ValueError(f"{time_col} not in event_meta columns: {list(event_meta.columns)}")
 
-    em = event_meta.copy().reset_index(drop=True)
+    em = _epoch_condition_plot_meta(event_meta)
     em[time_col] = pd.to_numeric(em[time_col], errors="coerce")
-    em = em.dropna(subset=[time_col, "condition", "epoch_id"]).reset_index(drop=True)
+    em = em.dropna(subset=[time_col, "condition_plot", "epoch_id_plot"]).reset_index(drop=True)
     if len(em) != Xp_use.shape[1]:
         raise ValueError(f"event_meta rows ({len(em)}) must match Xp events ({Xp_use.shape[1]}).")
 
@@ -3529,30 +3733,59 @@ def _plot_group_base_trial_on_axes(ax2d, ax3d, ax3t, Xp, event_meta, *, time_col
     em["time_rel_s"] = em[time_col] - t0
     style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(em)
 
-    for cond in em["condition"].astype(str).unique():
-        em_cond = em[em["condition"].astype(str) == cond]
+    for grp in _epoch_condition_group_iter(em):
+        cond = grp["condition"]
+        ep = grp["epoch_id"]
+        idx = grp["indices"]
+        label = grp["label"] if _uses_segmented_epoch_groups(em) else _epoch_condition_plot_label(cond, ep, n_trials=grp["n_trials"])
         marker = cond_marker.get(cond, "o")
         ls = _epoch_condition_linestyle_for(cond_linestyle, cond)
-        for ep in sorted(em_cond["epoch_id"].astype(int).unique()):
-            idx = em_cond.index[em_cond["epoch_id"].astype(int) == ep].to_numpy()
-            label = f"{cond}, epoch {ep}"
-            color = _epoch_condition_color_for(style_ctx, cond, ep)
+        color = _epoch_condition_color_for(style_ctx, cond, ep)
 
-            ax2d.scatter(
-                Xp_use[0, idx],
-                Xp_use[1, idx],
-                s=45,
-                alpha=0.9,
-                marker=marker,
+        ax2d.scatter(
+            Xp_use[0, idx],
+            Xp_use[1, idx],
+            s=45,
+            alpha=0.9,
+            marker=marker,
+            color=color,
+            edgecolors="black",
+            linewidths=0.5,
+            label=label,
+        )
+        ax3d.scatter(
+            Xp_use[0, idx],
+            Xp_use[1, idx],
+            Xp_use[2, idx],
+            s=30,
+            alpha=0.85,
+            marker=marker,
+            color=color,
+            edgecolors="black",
+            linewidths=0.4,
+            label=label,
+        )
+        if idx.size >= 2:
+            ord_idx = np.argsort(em.loc[idx, "time_rel_s"].to_numpy(dtype=float))
+            idx2 = idx[ord_idx]
+            ax3t.plot(
+                Xp_use[0, idx2],
+                Xp_use[1, idx2],
+                em.loc[idx2, "time_rel_s"].to_numpy(dtype=float),
                 color=color,
-                edgecolors="black",
-                linewidths=0.5,
+                linestyle=ls,
+                linewidth=2.0,
+                marker=marker,
+                markersize=3.5,
+                markeredgecolor="black",
+                markeredgewidth=0.5,
                 label=label,
             )
-            ax3d.scatter(
+        else:
+            ax3t.scatter(
                 Xp_use[0, idx],
                 Xp_use[1, idx],
-                Xp_use[2, idx],
+                em.loc[idx, "time_rel_s"].to_numpy(dtype=float),
                 s=30,
                 alpha=0.85,
                 marker=marker,
@@ -3561,35 +3794,6 @@ def _plot_group_base_trial_on_axes(ax2d, ax3d, ax3t, Xp, event_meta, *, time_col
                 linewidths=0.4,
                 label=label,
             )
-            if idx.size >= 2:
-                ord_idx = np.argsort(em.loc[idx, "time_rel_s"].to_numpy(dtype=float))
-                idx2 = idx[ord_idx]
-                ax3t.plot(
-                    Xp_use[0, idx2],
-                    Xp_use[1, idx2],
-                    em.loc[idx2, "time_rel_s"].to_numpy(dtype=float),
-                    color=color,
-                    linestyle=ls,
-                    linewidth=2.0,
-                    marker=marker,
-                    markersize=3.5,
-                    markeredgecolor="black",
-                    markeredgewidth=0.5,
-                    label=label,
-                )
-            else:
-                ax3t.scatter(
-                    Xp_use[0, idx],
-                    Xp_use[1, idx],
-                    em.loc[idx, "time_rel_s"].to_numpy(dtype=float),
-                    s=30,
-                    alpha=0.85,
-                    marker=marker,
-                    color=color,
-                    edgecolors="black",
-                    linewidths=0.4,
-                    label=label,
-                )
 
     ax2d.set_xlabel(_pc_axis_label(1, n_pc_available=n_pc_available))
     ax2d.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
@@ -3600,6 +3804,8 @@ def _plot_group_base_trial_on_axes(ax2d, ax3d, ax3t, Xp, event_meta, *, time_col
     ax3t.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
     ax3t.set_zlabel("Time (s, rel)")
     if show_legend:
+        _legend_unique(ax2d, fontsize=7)
+        _legend_unique(ax3d, fontsize=7)
         _legend_unique(ax3t, fontsize=7)
 
 
@@ -3617,12 +3823,18 @@ def _plot_group_epochmean_on_axes(
     Xp_use, n_pc_available = _pad_scores_to_min_pcs(Xp, pc_axis=0, min_pcs=3, fill_value=0.0)
 
     em_mean = _epoch_mean_pc_table(Xp_use, event_meta)
-    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(event_meta)
+    style_ctx, cond_marker, cond_linestyle = _epoch_condition_color_marker_maps(_epoch_condition_plot_meta(event_meta))
 
     for _, rec in em_mean.iterrows():
         cond = str(rec["condition"])
         ep = int(rec["epoch_id"])
-        label = f"{cond}, epoch {ep} (n={int(rec['n_trials'])})"
+        label = str(rec["plot_label"]) if "plot_label" in rec and pd.notna(rec["plot_label"]) else _epoch_condition_plot_label(
+            cond,
+            ep,
+            n_trials=int(rec["n_trials"]),
+            parent_condition=rec.get("context_condition"),
+            actual_condition=rec.get("actual_condition"),
+        )
         color = _epoch_condition_color_for(style_ctx, cond, ep)
 
         ax2d.scatter(rec["pc1"], rec["pc2"], s=220, alpha=1.0, marker=cond_marker.get(cond, "o"), color=color, edgecolors="black", linewidths=0.9, label=label)
@@ -3664,7 +3876,13 @@ def _plot_group_epochmean_on_axes(
                 color=_epoch_condition_color_for(style_ctx, cond, ep),
                 edgecolors="black",
                 linewidths=0.6,
-                label=f"{cond}, epoch {ep} (n={int(rec['n_trials'])})",
+                label=str(rec["plot_label"]) if "plot_label" in rec and pd.notna(rec["plot_label"]) else _epoch_condition_plot_label(
+                    cond,
+                    ep,
+                    n_trials=int(rec["n_trials"]),
+                    parent_condition=rec.get("context_condition"),
+                    actual_condition=rec.get("actual_condition"),
+                ),
             )
 
     ax2d.set_xlabel(_pc_axis_label(1, n_pc_available=n_pc_available))
@@ -3706,13 +3924,21 @@ def _plot_group_trial_time_on_axes(
             raise ValueError(f"bin_time length ({zt.size}) must equal n_bins ({n_bins}).")
     zt = zt.copy()
 
-    em = event_meta.copy().reset_index(drop=True)
+    em = _epoch_condition_plot_meta(event_meta)
     style_ctx, _, cond_linestyle = _epoch_condition_color_marker_maps(em)
+    label_map = _segment_label_map(em, include_n_trials=True) if _uses_segmented_epoch_groups(em) else {}
+    seg_first_idx = (
+        em.groupby("plot_segment_id", sort=False)
+        .apply(lambda g: int(g.index[0]))
+        .to_dict()
+        if _uses_segmented_epoch_groups(em)
+        else {}
+    )
     seen = set()
 
     for i in range(n_trials):
-        cond = str(em.loc[i, "condition"])
-        ep = int(em.loc[i, "epoch_id"])
+        cond = str(em.loc[i, "condition_plot"])
+        ep = int(em.loc[i, "epoch_id_plot"])
         x = scores_use[i, :, 0].astype(float)
         y = scores_use[i, :, 1].astype(float)
         z = scores_use[i, :, 2].astype(float)
@@ -3722,9 +3948,13 @@ def _plot_group_trial_time_on_axes(
             y = gaussian_filter1d(y, sigma=smooth_sigma)
             z = gaussian_filter1d(z, sigma=smooth_sigma)
 
-        label = f"{cond}, epoch {ep}"
-        label2 = label if label not in seen else None
-        seen.add(label)
+        if _uses_segmented_epoch_groups(em):
+            seg_id = int(em.loc[i, "plot_segment_id"])
+            label2 = label_map.get(seg_id) if seg_first_idx.get(seg_id) == int(i) else None
+        else:
+            label = _epoch_condition_plot_label(cond, ep, n_trials=int((em["condition_plot"].astype(str).eq(cond) & em["epoch_id_plot"].astype(int).eq(ep)).sum()))
+            label2 = label if label not in seen else None
+            seen.add(label)
         color = _epoch_condition_color_for(style_ctx, cond, ep)
         ls = _epoch_condition_linestyle_for(cond_linestyle, cond)
 
@@ -3744,6 +3974,8 @@ def _plot_group_trial_time_on_axes(
     ax3t.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
     ax3t.set_zlabel("Time from event (s)")
     if show_legend:
+        _legend_unique(ax2d, fontsize=7)
+        _legend_unique(ax3d, fontsize=7)
         _legend_unique(ax3t, fontsize=7)
 
 
@@ -3773,7 +4005,13 @@ def _plot_group_epoch_population_on_axes(
     for i, rec in epoch_info_df.reset_index(drop=True).iterrows():
         cond = str(rec["condition"])
         ep = int(rec["epoch_id"])
-        label = f"{cond}, epoch {ep} (n={int(rec['n_trials'])})"
+        label = str(rec["plot_label"]) if "plot_label" in rec and pd.notna(rec["plot_label"]) else _epoch_condition_plot_label(
+            cond,
+            ep,
+            n_trials=int(rec["n_trials"]),
+            parent_condition=rec.get("context_condition"),
+            actual_condition=rec.get("actual_condition"),
+        )
         x = epoch_traj_use[i][0].astype(float)
         y = epoch_traj_use[i][1].astype(float)
         z = epoch_traj_use[i][2].astype(float)
@@ -3808,6 +4046,8 @@ def _plot_group_epoch_population_on_axes(
     ax3t.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
     ax3t.set_zlabel("Time from event (s)")
     if show_legend:
+        _legend_unique(ax2d, fontsize=7)
+        _legend_unique(ax3d, fontsize=7)
         _legend_unique(ax3t, fontsize=7)
 
 

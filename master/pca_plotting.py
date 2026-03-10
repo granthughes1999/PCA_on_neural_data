@@ -3600,6 +3600,8 @@ def _plot_group_base_trial_on_axes(ax2d, ax3d, ax3t, Xp, event_meta, *, time_col
     ax3t.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
     ax3t.set_zlabel("Time (s, rel)")
     if show_legend:
+        _legend_unique(ax2d, fontsize=7)
+        _legend_unique(ax3d, fontsize=7)
         _legend_unique(ax3t, fontsize=7)
 
 
@@ -3744,6 +3746,8 @@ def _plot_group_trial_time_on_axes(
     ax3t.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
     ax3t.set_zlabel("Time from event (s)")
     if show_legend:
+        _legend_unique(ax2d, fontsize=7)
+        _legend_unique(ax3d, fontsize=7)
         _legend_unique(ax3t, fontsize=7)
 
 
@@ -3808,6 +3812,8 @@ def _plot_group_epoch_population_on_axes(
     ax3t.set_ylabel(_pc_axis_label(2, n_pc_available=n_pc_available))
     ax3t.set_zlabel("Time from event (s)")
     if show_legend:
+        _legend_unique(ax2d, fontsize=7)
+        _legend_unique(ax3d, fontsize=7)
         _legend_unique(ax3t, fontsize=7)
 
 

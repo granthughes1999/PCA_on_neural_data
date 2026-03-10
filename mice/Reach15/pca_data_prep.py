@@ -226,9 +226,71 @@ def build_units_probe_dict(df_units: pd.DataFrame, probe_col: str | None = None)
         out[str(probe)] = df_units[probe_key.astype(str) == str(probe)].copy().reset_index(drop=True)
     return out
 
+
+def _bundle_safe_name(value: Any) -> str:
+    s = str(value).strip()
+    if s == "":
+        return "bundle_latest"
+    s = re.sub(r'[\\/:*?"<>|]+', "_", s)
+    s = re.sub(r"\s+", "_", s)
+    s = re.sub(r"_+", "_", s).strip("._ ")
+    return s or "bundle_latest"
+
+
+def _infer_bundle_session_name(
+    *,
+    explicit_session_name: str | Path | None = None,
+    bombcell_root_for_auto_build: str | Path = "",
+    nwb_path_for_auto_build: str | Path = "",
+) -> str | None:
+    if explicit_session_name is not None and str(explicit_session_name).strip() != "":
+        return _bundle_safe_name(explicit_session_name)
+
+    bombcell_root = Path(str(bombcell_root_for_auto_build).strip()) if str(bombcell_root_for_auto_build).strip() != "" else None
+    if bombcell_root is not None:
+        parts = [p for p in bombcell_root.parts]
+        if "Kilosort_Recordings" in parts:
+            idx = parts.index("Kilosort_Recordings")
+            if idx + 1 < len(parts):
+                return _bundle_safe_name(parts[idx + 1])
+        if bombcell_root.parent.name:
+            return _bundle_safe_name(bombcell_root.parent.name)
+
+    nwb_path = Path(str(nwb_path_for_auto_build).strip()) if str(nwb_path_for_auto_build).strip() != "" else None
+    if nwb_path is not None:
+        if nwb_path.suffix:
+            return _bundle_safe_name(nwb_path.stem)
+        if nwb_path.name:
+            return _bundle_safe_name(nwb_path.name)
+
+    return None
+
+
+def resolve_processed_bundle_dir(
+    processed_bundle_dir: str | Path | None = None,
+    *,
+    session_name: str | Path | None = None,
+    nwb_path_for_auto_build: str | Path = "",
+    bombcell_root_for_auto_build: str | Path = "",
+) -> Path:
+    base = Path("processed_data") / "bundle_latest" if processed_bundle_dir is None else Path(processed_bundle_dir)
+    session_key = _infer_bundle_session_name(
+        explicit_session_name=session_name,
+        bombcell_root_for_auto_build=bombcell_root_for_auto_build,
+        nwb_path_for_auto_build=nwb_path_for_auto_build,
+    )
+    if session_key is None:
+        return base
+
+    if base.name == "bundle_latest":
+        return base.parent / session_key
+    return base
+    
+
 def load_or_build_processed_bundle(
     *,
     processed_bundle_dir: str | Path | None = None,
+    session_name: str | Path | None = None,
     nwb_path_for_auto_build: str | Path = "",
     bombcell_root_for_auto_build: str | Path = "",
     use_bombcell_if_available: bool = True,
@@ -257,12 +319,19 @@ def load_or_build_processed_bundle(
       in_brainRegion and brain_region, but only if a Bombcell root is provided.
     """
 
-    if processed_bundle_dir is None:
-        processed_bundle_dir = Path("processed_data") / "bundle_latest"
-    processed_bundle_dir = Path(processed_bundle_dir)
-
     bombcell_root_str = str(bombcell_root_for_auto_build).strip()
     nwb_path_str = str(nwb_path_for_auto_build).strip()
+    processed_bundle_dir = resolve_processed_bundle_dir(
+        processed_bundle_dir,
+        session_name=session_name,
+        nwb_path_for_auto_build=nwb_path_for_auto_build,
+        bombcell_root_for_auto_build=bombcell_root_for_auto_build,
+    )
+    bundle_session_name = _infer_bundle_session_name(
+        explicit_session_name=session_name,
+        bombcell_root_for_auto_build=bombcell_root_for_auto_build,
+        nwb_path_for_auto_build=nwb_path_for_auto_build,
+    )
 
     if use_bombcell_if_available and bombcell_root_str == "" and verbose:
         print(
@@ -281,16 +350,34 @@ def load_or_build_processed_bundle(
             _md = _bundle_tmp["merged_dic"]
             _probe0 = sorted(list(_md.keys()))[0]
             _cols0 = set(_md[_probe0].columns)
+            _meta_tmp = _bundle_tmp.get("meta", {}) if isinstance(_bundle_tmp, dict) else {}
+            _extras_tmp = _bundle_tmp.get("extras", {}) if isinstance(_bundle_tmp, dict) else {}
 
             _has_bombcell_cols = ("in_brainRegion" in _cols0) and ("brain_region" in _cols0)
-            _has_bombcell_cols_2 = ('Brain_Region_x' in _cols0) and ('bc_ROI_x' in _cols0)
-            if (not _has_bombcell_cols) and use_bombcell_if_available and bombcell_root_str != "":
+            _has_bombcell_cols_2 = ("Brain_Region_x" in _cols0) and ("bc_ROI_x" in _cols0)
+            _has_any_bombcell_cols = _has_bombcell_cols or _has_bombcell_cols_2
+            _existing_session_name = None
+            if isinstance(_meta_tmp, dict):
+                _existing_session_name = _meta_tmp.get("bundle_session_name") or _meta_tmp.get("bundle_dir_name")
+            if _existing_session_name in {None, ""} and isinstance(_extras_tmp, dict):
+                _existing_session_name = _extras_tmp.get("bundle_session_name")
+            if (
+                bundle_session_name not in {None, ""}
+                and _existing_session_name not in {None, ""}
+                and _bundle_safe_name(_existing_session_name) != _bundle_safe_name(bundle_session_name)
+            ):
                 if verbose:
-                    print("Existing bundle missing Bombcell columns. Rebuild requested.")
+                    print(
+                        "Existing bundle session key does not match requested session. "
+                        f"Found '{_existing_session_name}', expected '{bundle_session_name}'. Rebuild requested."
+                    )
                 rebuild_required = True
-            elif (not _has_bombcell_cols_2) and use_bombcell_if_available and bombcell_root_str != "":
+            if (not _has_any_bombcell_cols) and use_bombcell_if_available and bombcell_root_str != "":
                 if verbose:
-                    print("Existing bundle missing old-format Bombcell columns. Rebuild requested.")
+                    print(
+                        "Existing bundle missing Bombcell columns in both supported schemas. "
+                        "Rebuild requested."
+                    )
                 rebuild_required = True
         except Exception as e:
             if verbose:
@@ -364,6 +451,7 @@ def load_or_build_processed_bundle(
                 "auto_built_from_nwb": str(nwb_path_for_auto_build),
                 "bombcell_root": bombcell_root_str if bombcell_root_str != "" else None,
                 "bombcell_report": bombcell_report,
+                "bundle_session_name": bundle_session_name,
             },
         )
 
@@ -383,6 +471,8 @@ def load_or_build_processed_bundle(
         print("Loaded bundle:", processed_bundle_dir)
         print("Meta:", meta)
         print("pca_event_meta rows:", len(pca_event_meta))
+        if bundle_session_name is not None:
+            print("Bundle session key:", bundle_session_name)
 
     return bundle, merged_dic, stim_df, df_stim, pca_event_meta, extras, meta, processed_bundle_dir
 
@@ -651,6 +741,114 @@ def check_stim_event_timing(df_stim, max_window=4.0, show_detailed_output=True) 
 
     return results
 
+def _real_condition_epoch_label(condition: str, epoch_id: int) -> str:
+    cond = str(condition).strip().lower()
+    ep = int(epoch_id)
+    if cond == "baseline" and ep == 0:
+        return "baseline_epoch"
+    return f"{cond}_epoch_{ep}"
+
+
+def _build_real_reachinit_epoch_table(
+    baseline_start_times,
+    stimulation_start_times,
+    washout_start_times,
+) -> pd.DataFrame:
+    rows = []
+    for cond, values in (
+        ("baseline", baseline_start_times),
+        ("stimulation", stimulation_start_times),
+        ("washout", washout_start_times),
+    ):
+        arr = np.asarray(values if values is not None else [], dtype=float).ravel()
+        if arr.size == 0:
+            continue
+        arr = arr[np.isfinite(arr)]
+        for start_time in arr.tolist():
+            rows.append({"start_time": float(start_time), "real_condition": cond})
+
+    if len(rows) == 0:
+        return pd.DataFrame(columns=["start_time", "real_condition", "real_epoch_id", "real_condition_epoch"])
+
+    real_df = pd.DataFrame(rows).sort_values("start_time", kind="mergesort").reset_index(drop=True)
+
+    counters = {"baseline": -1, "stimulation": 0, "washout": 0}
+    prev_cond = None
+    epoch_ids = []
+    labels = []
+    for cond in real_df["real_condition"].astype(str):
+        if cond != prev_cond:
+            counters.setdefault(cond, 0)
+            counters[cond] += 1
+            prev_cond = cond
+        ep = int(counters[cond])
+        epoch_ids.append(ep)
+        labels.append(_real_condition_epoch_label(cond, ep))
+
+    real_df["real_epoch_id"] = np.asarray(epoch_ids, dtype=int)
+    real_df["real_condition_epoch"] = labels
+    return real_df
+
+
+def _annotate_real_reachinit_epochs(
+    pca_event_meta: pd.DataFrame,
+    baseline_start_times,
+    stimulation_start_times,
+    washout_start_times,
+) -> pd.DataFrame:
+    out = pca_event_meta.copy()
+    if out.empty:
+        out["real_condition"] = []
+        out["real_epoch_id"] = []
+        out["real_condition_epoch"] = []
+        out["real_condition_source"] = []
+        out["real_condition_matched"] = []
+        return out
+
+    real_df = _build_real_reachinit_epoch_table(
+        baseline_start_times=baseline_start_times,
+        stimulation_start_times=stimulation_start_times,
+        washout_start_times=washout_start_times,
+    )
+
+    out["real_condition"] = out["condition"].astype(str)
+    out["real_epoch_id"] = pd.to_numeric(out["epoch_id"], errors="coerce").astype("Int64")
+    if "condition_epoch" in out.columns:
+        out["real_condition_epoch"] = out["condition_epoch"].astype(str)
+    else:
+        out["real_condition_epoch"] = [
+            _real_condition_epoch_label(cond, ep)
+            for cond, ep in zip(out["real_condition"].astype(str), out["real_epoch_id"].fillna(0).astype(int))
+        ]
+    out["real_condition_source"] = "original_condition"
+    out["real_condition_matched"] = False
+
+    if real_df.empty or "start_time" not in out.columns:
+        return out
+
+    real_df = real_df.copy()
+    real_df["_start_key"] = pd.to_numeric(real_df["start_time"], errors="coerce").round(9)
+    real_lookup = (
+        real_df.dropna(subset=["_start_key"])
+        .drop_duplicates(subset=["_start_key"], keep="first")
+        .set_index("_start_key")[["real_condition", "real_epoch_id", "real_condition_epoch"]]
+    )
+    if real_lookup.empty:
+        return out
+
+    event_start_key = pd.to_numeric(out["start_time"], errors="coerce").round(9)
+    matched = event_start_key.isin(real_lookup.index)
+
+    if bool(matched.any()):
+        out.loc[matched, "real_condition"] = event_start_key.loc[matched].map(real_lookup["real_condition"]).to_numpy()
+        out.loc[matched, "real_epoch_id"] = event_start_key.loc[matched].map(real_lookup["real_epoch_id"]).to_numpy()
+        out.loc[matched, "real_condition_epoch"] = event_start_key.loc[matched].map(real_lookup["real_condition_epoch"]).to_numpy()
+        out.loc[matched, "real_condition_source"] = "reachInit_stimROI_real_start_times"
+        out.loc[matched, "real_condition_matched"] = True
+
+    return out
+
+
 def build_pca_event_meta_and_event_times(
     stim_df,
     baseline_trials_idx,
@@ -824,6 +1022,12 @@ def build_pca_event_meta_and_event_times(
         .sort_values("trial_index0")
         .reset_index(drop=True)
     )
+    pca_event_meta = _annotate_real_reachinit_epochs(
+        pca_event_meta,
+        baseline_start_times=baseline_reachInit_stimROI_start_times,
+        stimulation_start_times=stimulation_reachInit_stimROI_start_times,
+        washout_start_times=washout_reachInit_stimROI_start_times,
+    )
 
     return (
         pca_event_meta,
@@ -856,6 +1060,12 @@ def _normalize_event_time_source_name(name: str) -> str:
         "stimroi_start_times": "stimROI_start_times",
         "optical": "optical_start_times",
         "optical_start_times": "optical_start_times",
+        "baseline_reachinit_stimroi_timestamps": "baseline_reachInit_stimROI_start_times",
+        "baseline_reachinit_stimroi_start_times": "baseline_reachInit_stimROI_start_times",
+        "stimulation_reachinit_stimroi_timestamps": "stimulation_reachInit_stimROI_start_times",
+        "stimulation_reachinit_stimroi_start_times": "stimulation_reachInit_stimROI_start_times",
+        "washout_reachinit_stimroi_timestamps": "washout_reachInit_stimROI_start_times",
+        "washout_reachinit_stimroi_start_times": "washout_reachInit_stimROI_start_times",
         "custom": "custom_event_start_times",
         "custom_event": "custom_event_start_times",
         "custom_event_start_times": "custom_event_start_times",
@@ -910,6 +1120,9 @@ def align_pca_event_meta_start_times(
     stimROI_start_times: np.ndarray | list[float] | None = None,
     optical_start_times: np.ndarray | list[float] | None = None,
     all_stimROI_triggers_start_times: np.ndarray | list[float] | None = None,
+    baseline_reachInit_stimROI_start_times: np.ndarray | list[float] | None = None,
+    stimulation_reachInit_stimROI_start_times: np.ndarray | list[float] | None = None,
+    washout_reachInit_stimROI_start_times: np.ndarray | list[float] | None = None,
     custom_event_start_times: np.ndarray | list[float] | None = None,
     mismatch: str = "index_then_nearest",
     max_delta_s: float | None = None,
@@ -952,6 +1165,9 @@ def align_pca_event_meta_start_times(
         "stimROI_start_times": stimROI_start_times,
         "optical_start_times": optical_start_times,
         "all_stimROI_triggers_start_times": all_stimROI_triggers_start_times,
+        "baseline_reachInit_stimROI_start_times": baseline_reachInit_stimROI_start_times,
+        "stimulation_reachInit_stimROI_start_times": stimulation_reachInit_stimROI_start_times,
+        "washout_reachInit_stimROI_start_times": washout_reachInit_stimROI_start_times,
         "custom_event_start_times": custom_event_start_times,
     }
 
@@ -1154,6 +1370,9 @@ def apply_runner_post_alignment(
     stimROI_start_times: np.ndarray | list[float] | None = None,
     optical_start_times: np.ndarray | list[float] | None = None,
     all_stimROI_triggers_start_times: np.ndarray | list[float] | None = None,
+    baseline_reachInit_stimROI_start_times: np.ndarray | list[float] | None = None,
+    stimulation_reachInit_stimROI_start_times: np.ndarray | list[float] | None = None,
+    washout_reachInit_stimROI_start_times: np.ndarray | list[float] | None = None,
     custom_event_start_times: np.ndarray | list[float] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
@@ -1172,6 +1391,9 @@ def apply_runner_post_alignment(
         "stimROI_start_times": stimROI_start_times,
         "optical_start_times": optical_start_times,
         "all_stimROI_triggers_start_times": all_stimROI_triggers_start_times,
+        "baseline_reachInit_stimROI_start_times": baseline_reachInit_stimROI_start_times,
+        "stimulation_reachInit_stimROI_start_times": stimulation_reachInit_stimROI_start_times,
+        "washout_reachInit_stimROI_start_times": washout_reachInit_stimROI_start_times,
         "custom_event_start_times": custom_event_start_times,
     }
 
@@ -1202,7 +1424,12 @@ def apply_runner_post_alignment(
         out = out[out["start_time_align_method"].astype(str).eq("index")].reset_index(drop=True)
     rows_after_count_mode = int(len(out))
 
-    source_condition_map = {"stimROI_start_times": "stimulation"}
+    source_condition_map = {
+        "stimROI_start_times": "stimulation",
+        "baseline_reachInit_stimROI_start_times": "baseline",
+        "stimulation_reachInit_stimROI_start_times": "stimulation",
+        "washout_reachInit_stimROI_start_times": "washout",
+    }
     source_condition = source_condition_map.get(source_name, None)
     rows_before_source_condition = int(len(out))
     if bool(enforce_source_condition) and (source_condition is not None) and ("condition" in out.columns):
@@ -1275,6 +1502,9 @@ def configure_epoch_pca_runner(
     stimROI_start_times: np.ndarray | list[float] | None,
     optical_start_times: np.ndarray | list[float] | None,
     all_stimROI_triggers_start_times: np.ndarray | list[float] | None,
+    baseline_reachInit_stimROI_start_times: np.ndarray | list[float] | None = None,
+    stimulation_reachInit_stimROI_start_times: np.ndarray | list[float] | None = None,
+    washout_reachInit_stimROI_start_times: np.ndarray | list[float] | None = None,
     EPOCH_PCA_PROBE: str,
     EPOCH_PCA_BRAIN_REGION: str | None,
     EPOCH_PCA_ROI_FILTER: str | None,
@@ -1372,6 +1602,9 @@ def configure_epoch_pca_runner(
         stimROI_start_times=stimROI_start_times,
         optical_start_times=optical_start_times,
         all_stimROI_triggers_start_times=all_stimROI_triggers_start_times,
+        baseline_reachInit_stimROI_start_times=baseline_reachInit_stimROI_start_times,
+        stimulation_reachInit_stimROI_start_times=stimulation_reachInit_stimROI_start_times,
+        washout_reachInit_stimROI_start_times=washout_reachInit_stimROI_start_times,
         custom_event_start_times=custom_event_start_times,
         mismatch=EVENT_TIME_ALIGN_MISMATCH,
         max_delta_s=EVENT_TIME_ALIGN_MAX_DELTA_S,
@@ -1385,6 +1618,9 @@ def configure_epoch_pca_runner(
         "stimROI_start_times": stimROI_start_times,
         "optical_start_times": optical_start_times,
         "all_stimROI_triggers_start_times": all_stimROI_triggers_start_times,
+        "baseline_reachInit_stimROI_start_times": baseline_reachInit_stimROI_start_times,
+        "stimulation_reachInit_stimROI_start_times": stimulation_reachInit_stimROI_start_times,
+        "washout_reachInit_stimROI_start_times": washout_reachInit_stimROI_start_times,
         "custom_event_start_times": custom_event_start_times,
     }
     _event_time_source_name = _normalize_event_time_source_name(EVENT_TIME_ALIGN_TO)
@@ -1405,6 +1641,9 @@ def configure_epoch_pca_runner(
         stimROI_start_times=stimROI_start_times,
         optical_start_times=optical_start_times,
         all_stimROI_triggers_start_times=all_stimROI_triggers_start_times,
+        baseline_reachInit_stimROI_start_times=baseline_reachInit_stimROI_start_times,
+        stimulation_reachInit_stimROI_start_times=stimulation_reachInit_stimROI_start_times,
+        washout_reachInit_stimROI_start_times=washout_reachInit_stimROI_start_times,
         custom_event_start_times=custom_event_start_times,
     )
     _count_mode = _post_align_report["count_mode"]
@@ -1550,6 +1789,9 @@ def configure_epoch_pca_runner_v1(
     stimROI_start_times: np.ndarray | list[float] | None,
     optical_start_times: np.ndarray | list[float] | None,
     all_stimROI_triggers_start_times: np.ndarray | list[float] | None,
+    baseline_reachInit_stimROI_start_times: np.ndarray | list[float] | None = None,
+    stimulation_reachInit_stimROI_start_times: np.ndarray | list[float] | None = None,
+    washout_reachInit_stimROI_start_times: np.ndarray | list[float] | None = None,
     EPOCH_PCA_PROBE: str,
     EPOCH_PCA_BRAIN_REGION: str | None,
     EPOCH_PCA_ROI_FILTER: str | None,
@@ -1654,6 +1896,9 @@ def configure_epoch_pca_runner_v1(
         stimROI_start_times=stimROI_start_times,
         optical_start_times=optical_start_times,
         all_stimROI_triggers_start_times=all_stimROI_triggers_start_times,
+        baseline_reachInit_stimROI_start_times=baseline_reachInit_stimROI_start_times,
+        stimulation_reachInit_stimROI_start_times=stimulation_reachInit_stimROI_start_times,
+        washout_reachInit_stimROI_start_times=washout_reachInit_stimROI_start_times,
         custom_event_start_times=custom_event_start_times,
         mismatch=EVENT_TIME_ALIGN_MISMATCH,
         max_delta_s=EVENT_TIME_ALIGN_MAX_DELTA_S,
@@ -1667,6 +1912,9 @@ def configure_epoch_pca_runner_v1(
         "stimROI_start_times": stimROI_start_times,
         "optical_start_times": optical_start_times,
         "all_stimROI_triggers_start_times": all_stimROI_triggers_start_times,
+        "baseline_reachInit_stimROI_start_times": baseline_reachInit_stimROI_start_times,
+        "stimulation_reachInit_stimROI_start_times": stimulation_reachInit_stimROI_start_times,
+        "washout_reachInit_stimROI_start_times": washout_reachInit_stimROI_start_times,
         "custom_event_start_times": custom_event_start_times,
     }
     _event_time_source_name = _normalize_event_time_source_name(EVENT_TIME_ALIGN_TO)
@@ -1687,6 +1935,9 @@ def configure_epoch_pca_runner_v1(
         stimROI_start_times=stimROI_start_times,
         optical_start_times=optical_start_times,
         all_stimROI_triggers_start_times=all_stimROI_triggers_start_times,
+        baseline_reachInit_stimROI_start_times=baseline_reachInit_stimROI_start_times,
+        stimulation_reachInit_stimROI_start_times=stimulation_reachInit_stimROI_start_times,
+        washout_reachInit_stimROI_start_times=washout_reachInit_stimROI_start_times,
         custom_event_start_times=custom_event_start_times,
     )
     _count_mode = _post_align_report["count_mode"]
@@ -2206,7 +2457,15 @@ def save_processed_bundle(
         "n_probes": len(merged_dic),
         "n_events_stim_df": int(len(stim_df)),
         "n_events_pca_meta": int(len(pca_event_meta)),
+        "bundle_dir_name": out.name,
     }
+    if isinstance(extras, dict):
+        if extras.get("auto_built_from_nwb") is not None:
+            meta["auto_built_from_nwb"] = str(extras["auto_built_from_nwb"])
+        if extras.get("bundle_session_name") is not None:
+            meta["bundle_session_name"] = str(extras["bundle_session_name"])
+        if extras.get("bombcell_root") is not None:
+            meta["bombcell_root"] = str(extras["bombcell_root"])
     (out / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return out
 
@@ -2613,7 +2872,7 @@ def setup_paths_and_verify(PROBES=['A', 'B', 'C', 'D', 'E', 'F'], NWB_FILE=None,
     optoicalStim_trials_index_path = rf"G:\Grant\behavior_data\DLC_net\{BEHAVIORAL_FOLDER}\videos\{DATE}\christielab\{SESSION}\{DATE}_christielab_{SESSION}_stim_allowed_trial_numbers_tone2_aligned.npy"
 
     CWD = Path.cwd().resolve()
-    DATA_SAVE_DIR = (CWD / "processed_data" / "bundle_latest").resolve()
+    DATA_SAVE_DIR = resolve_processed_bundle_dir(CWD / "processed_data" / "bundle_latest", session_name=NP_FILE).resolve()
     DATA_SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
     print('\nCreating processed bundle directory if it does not exist...')
@@ -2630,19 +2889,19 @@ def setup_paths_and_verify(PROBES=['A', 'B', 'C', 'D', 'E', 'F'], NWB_FILE=None,
         print(f"✅ Processed bundle directory found at: {DATA_SAVE_DIR}")
 
     # SET #5: Validate the NP session name and construct paths to data, with error handling
-    FULL_SESSION_PATH = Path(r'H:\Grant\Neuropixels\Kilosort_Recordings') / SESSION_NAME
-    if not FULL_SESSION_PATH.exists():
+    NP_ROOT_DIR = Path(r'H:\Grant\Neuropixels\Kilosort_Recordings') / SESSION_NAME
+    if not NP_ROOT_DIR.exists():
         raise FileNotFoundError(
-            f"❌ Expected to find session data at {FULL_SESSION_PATH}, but it does not exist. "
+            f"❌ Expected to find session data at {NP_ROOT_DIR}, but it does not exist. "
             "Please check that SESSION_NAME is set correctly and that the folder structure matches the expected format."
         )
 
-    if not os.path.exists(FULL_SESSION_PATH):
-        print(f"❌ Session folder not found at: {FULL_SESSION_PATH}")
+    if not os.path.exists(NP_ROOT_DIR):
+        print(f"❌ Session folder not found at: {NP_ROOT_DIR}")
         raise FileNotFoundError("Session folder not found")
     else:
         print("\n✅ Neuropixel Session folder found")
-        print(f"Neuropixel Session folder: {FULL_SESSION_PATH}\n")
+        print(f"Neuropixel Session folder: {NP_ROOT_DIR}\n")
 
     if not os.path.exists(baseline_trials_index_path):
         print(f"❌ Baseline trials index file not found at: {baseline_trials_index_path}")
@@ -2670,4 +2929,4 @@ def setup_paths_and_verify(PROBES=['A', 'B', 'C', 'D', 'E', 'F'], NWB_FILE=None,
         print(f"NWB file: {NWB_PATH}")
         print(f"Bombcell root folder: {BOMBCELL_ROOT_FOR_AUTO_BUILD}\n")
 
-    return {'NWB_PATH': NWB_PATH, 'BOMBCELL_ROOT_FOR_AUTO_BUILD': BOMBCELL_ROOT_FOR_AUTO_BUILD, 'baseline_trials_index_path': baseline_trials_index_path, 'washout_trials_index_path': washout_trials_index_path, 'optoicalStim_trials_index_path': optoicalStim_trials_index_path, 'SESSION_NAME': SESSION_NAME, 'DATA_SAVE_DIR': DATA_SAVE_DIR}
+    return {'NP_ROOT_DIR': NP_ROOT_DIR, 'NWB_PATH': NWB_PATH, 'BOMBCELL_ROOT_FOR_AUTO_BUILD': BOMBCELL_ROOT_FOR_AUTO_BUILD, 'baseline_trials_index_path': baseline_trials_index_path, 'washout_trials_index_path': washout_trials_index_path, 'optoicalStim_trials_index_path': optoicalStim_trials_index_path, 'SESSION_NAME': SESSION_NAME, 'DATA_SAVE_DIR': DATA_SAVE_DIR}

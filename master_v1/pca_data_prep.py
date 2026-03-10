@@ -282,9 +282,14 @@ def load_or_build_processed_bundle(
             _cols0 = set(_md[_probe0].columns)
 
             _has_bombcell_cols = ("in_brainRegion" in _cols0) and ("brain_region" in _cols0)
-            if (not _has_bombcell_cols) and use_bombcell_if_available and bombcell_root_str != "":
+            _has_bombcell_cols_2 = ("Brain_Region_x" in _cols0) and ("bc_ROI_x" in _cols0)
+            _has_any_bombcell_cols = _has_bombcell_cols or _has_bombcell_cols_2
+            if (not _has_any_bombcell_cols) and use_bombcell_if_available and bombcell_root_str != "":
                 if verbose:
-                    print("Existing bundle missing Bombcell columns. Rebuild requested.")
+                    print(
+                        "Existing bundle missing Bombcell columns in both supported schemas. "
+                        "Rebuild requested."
+                    )
                 rebuild_required = True
         except Exception as e:
             if verbose:

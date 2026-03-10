@@ -226,9 +226,70 @@ def build_units_probe_dict(df_units: pd.DataFrame, probe_col: str | None = None)
         out[str(probe)] = df_units[probe_key.astype(str) == str(probe)].copy().reset_index(drop=True)
     return out
 
+
+def _bundle_safe_name(value: Any) -> str:
+    s = str(value).strip()
+    if s == "":
+        return "bundle_latest"
+    s = re.sub(r'[\\/:*?"<>|]+', "_", s)
+    s = re.sub(r"\s+", "_", s)
+    s = re.sub(r"_+", "_", s).strip("._ ")
+    return s or "bundle_latest"
+
+
+def _infer_bundle_session_name(
+    *,
+    explicit_session_name: str | Path | None = None,
+    bombcell_root_for_auto_build: str | Path = "",
+    nwb_path_for_auto_build: str | Path = "",
+) -> str | None:
+    if explicit_session_name is not None and str(explicit_session_name).strip() != "":
+        return _bundle_safe_name(explicit_session_name)
+
+    bombcell_root = Path(str(bombcell_root_for_auto_build).strip()) if str(bombcell_root_for_auto_build).strip() != "" else None
+    if bombcell_root is not None:
+        parts = [p for p in bombcell_root.parts]
+        if "Kilosort_Recordings" in parts:
+            idx = parts.index("Kilosort_Recordings")
+            if idx + 1 < len(parts):
+                return _bundle_safe_name(parts[idx + 1])
+        if bombcell_root.parent.name:
+            return _bundle_safe_name(bombcell_root.parent.name)
+
+    nwb_path = Path(str(nwb_path_for_auto_build).strip()) if str(nwb_path_for_auto_build).strip() != "" else None
+    if nwb_path is not None:
+        if nwb_path.suffix:
+            return _bundle_safe_name(nwb_path.stem)
+        if nwb_path.name:
+            return _bundle_safe_name(nwb_path.name)
+
+    return None
+
+
+def resolve_processed_bundle_dir(
+    processed_bundle_dir: str | Path | None = None,
+    *,
+    session_name: str | Path | None = None,
+    nwb_path_for_auto_build: str | Path = "",
+    bombcell_root_for_auto_build: str | Path = "",
+) -> Path:
+    base = Path("processed_data") / "bundle_latest" if processed_bundle_dir is None else Path(processed_bundle_dir)
+    session_key = _infer_bundle_session_name(
+        explicit_session_name=session_name,
+        bombcell_root_for_auto_build=bombcell_root_for_auto_build,
+        nwb_path_for_auto_build=nwb_path_for_auto_build,
+    )
+    if session_key is None:
+        return base
+
+    if base.name == "bundle_latest":
+        return base.parent / session_key
+    return base
+
 def load_or_build_processed_bundle(
     *,
     processed_bundle_dir: str | Path | None = None,
+    session_name: str | Path | None = None,
     nwb_path_for_auto_build: str | Path = "",
     bombcell_root_for_auto_build: str | Path = "",
     use_bombcell_if_available: bool = True,
@@ -257,12 +318,19 @@ def load_or_build_processed_bundle(
       in_brainRegion and brain_region, but only if a Bombcell root is provided.
     """
 
-    if processed_bundle_dir is None:
-        processed_bundle_dir = Path("processed_data") / "bundle_latest"
-    processed_bundle_dir = Path(processed_bundle_dir)
-
     bombcell_root_str = str(bombcell_root_for_auto_build).strip()
     nwb_path_str = str(nwb_path_for_auto_build).strip()
+    processed_bundle_dir = resolve_processed_bundle_dir(
+        processed_bundle_dir,
+        session_name=session_name,
+        nwb_path_for_auto_build=nwb_path_for_auto_build,
+        bombcell_root_for_auto_build=bombcell_root_for_auto_build,
+    )
+    bundle_session_name = _infer_bundle_session_name(
+        explicit_session_name=session_name,
+        bombcell_root_for_auto_build=bombcell_root_for_auto_build,
+        nwb_path_for_auto_build=nwb_path_for_auto_build,
+    )
 
     if use_bombcell_if_available and bombcell_root_str == "" and verbose:
         print(
@@ -281,16 +349,34 @@ def load_or_build_processed_bundle(
             _md = _bundle_tmp["merged_dic"]
             _probe0 = sorted(list(_md.keys()))[0]
             _cols0 = set(_md[_probe0].columns)
+            _meta_tmp = _bundle_tmp.get("meta", {}) if isinstance(_bundle_tmp, dict) else {}
+            _extras_tmp = _bundle_tmp.get("extras", {}) if isinstance(_bundle_tmp, dict) else {}
 
             _has_bombcell_cols = ("in_brainRegion" in _cols0) and ("brain_region" in _cols0)
-            _has_bombcell_cols_2 = ('Brain_Region_x' in _cols0) and ('bc_ROI_x' in _cols0)
-            if (not _has_bombcell_cols) and use_bombcell_if_available and bombcell_root_str != "":
+            _has_bombcell_cols_2 = ("Brain_Region_x" in _cols0) and ("bc_ROI_x" in _cols0)
+            _has_any_bombcell_cols = _has_bombcell_cols or _has_bombcell_cols_2
+            _existing_session_name = None
+            if isinstance(_meta_tmp, dict):
+                _existing_session_name = _meta_tmp.get("bundle_session_name") or _meta_tmp.get("bundle_dir_name")
+            if _existing_session_name in {None, ""} and isinstance(_extras_tmp, dict):
+                _existing_session_name = _extras_tmp.get("bundle_session_name")
+            if (
+                bundle_session_name not in {None, ""}
+                and _existing_session_name not in {None, ""}
+                and _bundle_safe_name(_existing_session_name) != _bundle_safe_name(bundle_session_name)
+            ):
                 if verbose:
-                    print("Existing bundle missing Bombcell columns. Rebuild requested.")
+                    print(
+                        "Existing bundle session key does not match requested session. "
+                        f"Found '{_existing_session_name}', expected '{bundle_session_name}'. Rebuild requested."
+                    )
                 rebuild_required = True
-            elif (not _has_bombcell_cols_2) and use_bombcell_if_available and bombcell_root_str != "":
+            if (not _has_any_bombcell_cols) and use_bombcell_if_available and bombcell_root_str != "":
                 if verbose:
-                    print("Existing bundle missing old-format Bombcell columns. Rebuild requested.")
+                    print(
+                        "Existing bundle missing Bombcell columns in both supported schemas. "
+                        "Rebuild requested."
+                    )
                 rebuild_required = True
         except Exception as e:
             if verbose:
@@ -364,6 +450,7 @@ def load_or_build_processed_bundle(
                 "auto_built_from_nwb": str(nwb_path_for_auto_build),
                 "bombcell_root": bombcell_root_str if bombcell_root_str != "" else None,
                 "bombcell_report": bombcell_report,
+                "bundle_session_name": bundle_session_name,
             },
         )
 
@@ -383,6 +470,8 @@ def load_or_build_processed_bundle(
         print("Loaded bundle:", processed_bundle_dir)
         print("Meta:", meta)
         print("pca_event_meta rows:", len(pca_event_meta))
+        if bundle_session_name is not None:
+            print("Bundle session key:", bundle_session_name)
 
     return bundle, merged_dic, stim_df, df_stim, pca_event_meta, extras, meta, processed_bundle_dir
 
@@ -2116,7 +2205,15 @@ def save_processed_bundle(
         "n_probes": len(merged_dic),
         "n_events_stim_df": int(len(stim_df)),
         "n_events_pca_meta": int(len(pca_event_meta)),
+        "bundle_dir_name": out.name,
     }
+    if isinstance(extras, dict):
+        if extras.get("auto_built_from_nwb") is not None:
+            meta["auto_built_from_nwb"] = str(extras["auto_built_from_nwb"])
+        if extras.get("bundle_session_name") is not None:
+            meta["bundle_session_name"] = str(extras["bundle_session_name"])
+        if extras.get("bombcell_root") is not None:
+            meta["bombcell_root"] = str(extras["bombcell_root"])
     (out / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return out
 
@@ -2523,7 +2620,7 @@ def setup_paths_and_verify(PROBES=['A', 'B', 'C', 'D', 'E', 'F'], NWB_FILE=None,
     optoicalStim_trials_index_path = rf"G:\Grant\behavior_data\DLC_net\{BEHAVIORAL_FOLDER}\videos\{DATE}\christielab\{SESSION}\{DATE}_christielab_{SESSION}_stim_allowed_trial_numbers_tone2_aligned.npy"
 
     CWD = Path.cwd().resolve()
-    DATA_SAVE_DIR = (CWD / "processed_data" / "bundle_latest").resolve()
+    DATA_SAVE_DIR = resolve_processed_bundle_dir(CWD / "processed_data" / "bundle_latest", session_name=NP_FILE).resolve()
     DATA_SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
     print('\nCreating processed bundle directory if it does not exist...')
