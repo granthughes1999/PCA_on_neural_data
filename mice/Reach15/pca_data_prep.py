@@ -2846,11 +2846,12 @@ def session_to_analyze(MOUSE=None,BEHAVIORAL_FOLDER=None,
 
 
 def setup_paths_and_verify(PROBES=['A', 'B', 'C', 'D', 'E', 'F'], NWB_FILE=None, NP_FILE=None, DATE=None, SESSION=None, BEHAVIORAL_FOLDER=None, BOMBCELL=None):
-        # SET #1: Path to the NWB file for this session (on the neural data computer)
-    NWB_PATH = Path(fr"H:\NWB_OUT\{NWB_FILE}")
+    # SET #1: Path to the NWB file for this session (on the neural data computer)
+    NWB_PATH = Path(fr"H:\Grant\Neuropixel_Analysis\NWB\{NWB_FILE}")
 
     # SET #2: Path to the bombcell root folder for this session (on the neural data computer)
-    BOMBCELL_ROOT_FOR_AUTO_BUILD = Path(fr"H:\Grant\Neuropixels\Kilosort_Recordings\{NP_FILE}\bombcell\{BOMBCELL}")
+    BOMBCELL_ROOT_FOR_AUTO_BUILD = Path(fr"H:\Grant\Neuropixel_Analysis\BOMBCELL\{NP_FILE}\{BOMBCELL}")
+
 
     # SET #2: Validate bombcell root path and expected folder structure
     for probes in PROBES:
